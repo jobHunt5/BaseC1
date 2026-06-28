@@ -1,0 +1,24 @@
+{
+  "name": "areahunt",
+  "version": "0.1.0",
+  "description": "Scan a map area, discover local companies, their careers contact, and track your manual applications.",
+  "type": "commonjs",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.18.1",
+    "better-sqlite3": "^12.11.1",
+    "cheerio": "^1.2.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "nodemailer": "^6.10.1",
+    "p-limit": "^3.1.0"
+  }
+}

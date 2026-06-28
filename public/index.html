@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AreaHunt – Local Job Scanner</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<link rel="stylesheet" href="/styles.css?v=20260628outreach">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="/mapTheme.js?v=20260628areas"></script>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">Area<span>Hunt</span></div>
+  <div class="search-wrap">
+    <span class="icon">🔍</span>
+    <input type="text" id="searchInput" placeholder="Search address or suburb…" />
+  </div>
+  <button class="btn btn-draw" id="drawBtn" onclick="App.toggleDraw()">✦ Draw area</button>
+  <button class="btn btn-primary" id="scanBtn" onclick="App.scanArea()" style="display:none">⚡ Scan companies</button>
+  <button class="btn btn-outline" onclick="App.clearAll()">Clear</button>
+  <button class="btn btn-outline" id="profileBtn" onclick="App.openProfile()">👤 Profile</button>
+  <button class="btn btn-outline user-chip" id="userChip" onclick="App.openProfile()" style="display:none" title="Your profile"></button>
+  <button class="btn btn-primary" id="signInBtn" onclick="AuthGate.showLogin()" style="display:none">Sign in</button>
+  <div class="topbar-nav" role="navigation" aria-label="Main">
+    <button type="button" class="nav-link active" id="navScan" onclick="App.openScanPage()">🗺 Map scan</button>
+    <button type="button" class="nav-link" id="navPipeline" onclick="App.openPipelinePage('interested')">
+      💼 Saved &amp; applied
+      <span class="nav-badge" id="navPipelineBadge">0</span>
+    </button>
+  </div>
+  <div class="stats-pill" id="statsPill">
+    <strong id="totalCount">0</strong> found · <strong id="appliedCount">0</strong> applied
+  </div>
+  <div class="enrich-progress" id="enrichProgress" style="display:none"></div>
+</div>
+
+<div class="coverage-banner" id="coverageBanner" style="display:none"></div>
+
+<!-- Auth + onboarding gate -->
+<div class="auth-gate" id="authGate">
+  <div class="auth-card">
+    <div id="obProgress"></div>
+    <div class="auth-gate-body" id="authGateBody"></div>
+    <div class="auth-gate-nav" id="authGateNav"></div>
+  </div>
+</div>
+
+<!-- Profile modal -->
+<div class="modal-backdrop" id="profileModal" onclick="App.closeProfileBackdrop(event)">
+  <div class="modal modal-profile">
+    <div class="modal-header">
+      <div>
+        <div style="font-size:16px;font-weight:600">Your profile</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">All your details — edit anytime. Saved to your account.</div>
+      </div>
+      <button class="detail-close" onclick="App.closeProfile()">✕</button>
+    </div>
+    <div class="modal-body" id="profileFormBody">
+      <div class="profile-section-title">About you</div>
+      <label class="form-label">Full name</label>
+      <input class="form-input" id="profName" placeholder="Basil Sunny" />
+      <label class="form-label">City / region</label>
+      <input class="form-input" id="profCity" placeholder="Melbourne, VIC" />
+      <label class="form-label">Phone <span class="label-opt">(optional)</span></label>
+      <input class="form-input" id="profPhone" placeholder="+61 4xx xxx xxx" />
+
+      <div class="profile-section-title">Work preferences</div>
+      <label class="form-label">Industries</label>
+      <div class="chip-group sectors prof-industries" id="profIndustries"></div>
+      <label class="form-label">Employment type</label>
+      <div class="chip-group" id="profEmployment"></div>
+      <label class="form-label">Work mode</label>
+      <div class="chip-group" id="profWorkMode"></div>
+
+      <div class="profile-section-title">Education</div>
+      <div id="profEduList"></div>
+      <button type="button" class="btn btn-outline ob-add-btn" id="profAddEdu">+ Add education</button>
+
+      <div class="profile-section-title">Experience</div>
+      <label class="form-label">Years of experience</label>
+      <select class="form-input" id="profExpYears">
+        <option value="">Select…</option>
+        <option value="0–1">0–1</option>
+        <option value="1–3">1–3</option>
+        <option value="3–5">3–5</option>
+        <option value="5–10">5–10</option>
+        <option value="10+">10+</option>
+      </select>
+      <label class="form-label">Current / most recent role</label>
+      <input class="form-input" id="profCurrentRole" placeholder="Freelance UI Designer" />
+      <label class="form-label">Experience summary</label>
+      <textarea class="form-input" id="profExpSummary" rows="2" placeholder="Brief career highlights…"></textarea>
+      <label class="form-label">Qualifications & certs</label>
+      <input class="form-input" id="profQuals" placeholder="Adobe Certified, White Card…" />
+      <label class="form-label">Key skills</label>
+      <input class="form-input" id="profSkills" placeholder="UI/UX, Figma, React…" />
+
+      <div class="profile-section-title">Portfolio & outreach</div>
+      <label class="form-label">Portfolio / work samples URL</label>
+      <input class="form-input" id="profPortfolio" type="url" placeholder="https://yourportfolio.com" />
+      <label class="form-label toggle-row">
+        <input type="checkbox" id="profPortfolioRequired" />
+        <span>I usually need a portfolio link when applying</span>
+      </label>
+      <label class="form-label">Portfolio notes</label>
+      <textarea class="form-input" id="profPortfolioNotes" rows="2" placeholder="Behance for design, GitHub for dev…"></textarea>
+      <label class="form-label">Short pitch</label>
+      <textarea class="form-input" id="profPitch" rows="2" placeholder="2 sentences about what you do…"></textarea>
+      <label class="form-label">Email signature</label>
+      <textarea class="form-input" id="profSig" rows="2" placeholder="Name, email, phone"></textarea>
+      <label class="form-label">Your email (for sending outreach)</label>
+      <input class="form-input" id="profSenderEmail" type="email" placeholder="you@example.com" />
+      <p class="form-hint">SMTP must be configured in .env for direct send.</p>
+
+      <div class="profile-footer">
+        <button class="btn btn-primary" onclick="App.saveProfile()">Save profile</button>
+        <button class="btn btn-outline" onclick="App.closeProfile()">Cancel</button>
+        <button class="btn btn-outline profile-signout" onclick="App.logout()">Sign out</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="main" id="scanView">
+  <div class="map-panel">
+    <div id="map"></div>
+    <button type="button" class="map-mode-btn" id="mapModeBtn" onclick="App.toggleMapMode()" title="Switch to light map" aria-label="Switch to light map">☀️</button>
+    <div class="map-compass" aria-hidden="true">N</div>
+    <div class="map-overlay">
+      <div class="map-hint" id="mapHint">
+        <strong>Draw mode off</strong> — click "Draw area" then drag on the map
+      </div>
+      <div class="area-actions" id="areaActions" style="display:none">
+        <span class="area-actions-label">This scan area:</span>
+        <button type="button" class="btn btn-outline btn-sm" onclick="App.markAreaDone()">✓ Mark done</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="App.saveArea()">🔖 Save area</button>
+      </div>
+      <div class="scan-progress" id="scanProgress"></div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="sidebar-panel" id="sidebarScan">
+      <div class="sidebar-header">
+        <div class="sidebar-title">Scan results</div>
+        <div class="filters" id="industryFilters"></div>
+      </div>
+      <div class="company-list" id="companyList">
+        <div class="empty-state">
+          <div class="big-icon">🗺</div>
+          <h3>No area scanned yet</h3>
+          <p>Click <strong>Draw area</strong> and drag a rectangle on the map. Then hit <strong>Scan companies</strong> to discover businesses in that zone.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Separate full-page view for saved & applied companies -->
+<div class="pipeline-page hidden" id="pipelinePage">
+  <div class="pipeline-page-inner">
+    <header class="pipeline-page-header">
+      <h1>Saved &amp; applied</h1>
+      <p>Companies you saved or applied to — kept across all map scans.</p>
+    </header>
+    <div class="tabs pipeline-tabs">
+      <button type="button" class="tab active" id="pipeTabSaved" onclick="App.switchPipelineTab('interested')">
+        Saved <span class="tab-badge" id="tabSaved">0</span>
+      </button>
+      <button type="button" class="tab" id="pipeTabApplied" onclick="App.switchPipelineTab('applied')">
+        Applied <span class="tab-badge" id="tabApplied">0</span>
+      </button>
+    </div>
+    <div class="company-list pipeline-page-list" id="pipelineList"></div>
+  </div>
+</div>
+
+<!-- Company detail — shared by map scan + saved/applied page -->
+<div class="detail-backdrop" id="detailBackdrop" onclick="App.closeDetail()"></div>
+<div class="detail-panel" id="detailPanel">
+  <div class="detail-header">
+    <button class="detail-close" onclick="App.closeDetail()">✕</button>
+    <div>
+      <div style="font-size:15px;font-weight:600" id="detailName"></div>
+      <div style="font-size:12px;color:var(--muted)" id="detailType"></div>
+    </div>
+  </div>
+  <div class="detail-body" id="detailBody"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/industries.js?v=1"></script>
+<script src="/authFlow.js?v=20260629auth6"></script>
+<script src="/app.js?v=20260629profile3"></script>
+</body>
+</html>
