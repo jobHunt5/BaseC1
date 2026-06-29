@@ -13,7 +13,9 @@ const BLOCKED_EMAIL_RE = [
   /popperjs|tippy@|lottie@|\.min\.js@/i,
 ];
 
-const HIGH_CONFIDENCE_JOB_SOURCES = new Set(['greenhouse', 'lever', 'workable', 'ashby', 'json-ld']);
+const HIGH_CONFIDENCE_JOB_SOURCES = new Set(['greenhouse', 'lever', 'workable', 'ashby', 'json-ld', 'jobadder']);
+const BOARD_JOB_SOURCES = new Set(['seek', 'indeed', 'linkedin-jobs', 'jora']);
+const VERIFIED_LINKEDIN_MEMBER_SOURCES = new Set(['website', 'linkedin_company', 'serper']);
 
 function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
@@ -81,12 +83,120 @@ function atsSlugMatchesCompany(slug, company) {
 
 function jobConfidence(source) {
   if (HIGH_CONFIDENCE_JOB_SOURCES.has(source)) return 'verified';
+  if (BOARD_JOB_SOURCES.has(source)) return 'board';
   if (source === 'careers-page') return 'found';
   return 'unknown';
 }
 
 function isHighConfidenceJob(source) {
   return HIGH_CONFIDENCE_JOB_SOURCES.has(source);
+}
+
+function linkedinMemberConfidence(member) {
+  if (!member?.linkedin_url) return 'none';
+  if (VERIFIED_LINKEDIN_MEMBER_SOURCES.has(member.linkedin_source)) return 'verified';
+  return 'none';
+}
+
+function extractLinkedInCompanyUrl(socials) {
+  const url = socials?.linkedin || '';
+  if (!url || !/linkedin\.com\/company\//i.test(url)) return null;
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    u.search = '';
+    return u.origin + u.pathname.replace(/\/+$/, '');
+  } catch {
+    return url;
+  }
+}
+
+function buildCompanyLinkedIn(company) {
+  const url = extractLinkedInCompanyUrl(company.socials || {});
+  const { linkedinCompanyPeopleUrl } = require('./linkedinService');
+  const peopleUrl = url ? linkedinCompanyPeopleUrl(url) : null;
+
+  if (url) {
+    return {
+      status: 'verified',
+      status_label: 'Verified company page',
+      message: 'LinkedIn company page found on their website',
+      company_url: url,
+      people_url: peopleUrl,
+      verified: true,
+    };
+  }
+
+  return {
+    status: 'none',
+    status_label: 'No verified LinkedIn found',
+    message: 'No verified LinkedIn company page found on their website',
+    company_url: null,
+    people_url: null,
+    verified: false,
+  };
+}
+
+function buildCompanyLinks(company) {
+  const socials = company.socials || {};
+  const out = [];
+
+  if (company.website) {
+    out.push({ kind: 'website', label: 'Website', url: company.website, verified: true });
+  }
+  if (company.careers_url) {
+    out.push({ kind: 'careers', label: 'Careers', url: company.careers_url, verified: true });
+  }
+
+  const li = extractLinkedInCompanyUrl(socials);
+  if (li) {
+    out.push({ kind: 'linkedin_company', label: 'LinkedIn (company)', url: li, verified: true });
+  }
+
+  const SOCIAL_LABELS = {
+    instagram: 'Instagram',
+    facebook: 'Facebook',
+    twitter: 'X / Twitter',
+    youtube: 'YouTube',
+    tiktok: 'TikTok',
+  };
+  for (const [key, label] of Object.entries(SOCIAL_LABELS)) {
+    if (socials[key]) {
+      out.push({ kind: key, label, url: socials[key], verified: true });
+    }
+  }
+
+  return out;
+}
+
+function buildTrustSummary(company, jobs, team, linkedin) {
+  const verifiedJobs = (jobs || []).filter(j =>
+    j.confidence === 'verified' || isHighConfidenceJob(j.source),
+  ).length;
+  const websiteJobs = (jobs || []).filter(j => !BOARD_JOB_SOURCES.has(j.source)).length;
+  const verifiedTeam = (team || []).filter(m =>
+    m.linkedin_verified || linkedinMemberConfidence(m) === 'verified',
+  ).length;
+
+  const parts = [];
+  if (company.email_verified && company.email) parts.push('verified contact email');
+  if (linkedin?.verified) parts.push('verified LinkedIn company page');
+  if (verifiedJobs) parts.push(`${verifiedJobs} verified job listing${verifiedJobs !== 1 ? 's' : ''}`);
+  else if (websiteJobs) parts.push(`${websiteJobs} role${websiteJobs !== 1 ? 's' : ''} from careers page`);
+  if (verifiedTeam) parts.push(`${verifiedTeam} verified team LinkedIn profile${verifiedTeam !== 1 ? 's' : ''}`);
+
+  return {
+    level: verifiedJobs || linkedin?.verified || (company.email_verified && company.email)
+      ? 'high'
+      : (websiteJobs || company.enriched_at ? 'medium' : 'low'),
+    summary: parts.length
+      ? parts.join(' · ')
+      : 'Limited data — run a full scan to verify jobs and contacts',
+    verified_jobs: verifiedJobs,
+    website_jobs: websiteJobs,
+    verified_team_linkedin: verifiedTeam,
+    linkedin_company_verified: !!linkedin?.verified,
+  };
 }
 
 // --- description trust ---------------------------------------------------
@@ -186,9 +296,15 @@ module.exports = {
   atsSlugMatchesCompany,
   jobConfidence,
   isHighConfidenceJob,
+  linkedinMemberConfidence,
+  buildCompanyLinkedIn,
+  buildCompanyLinks,
+  buildTrustSummary,
   isJunkDescription,
   sanitizeDescription,
   scoreDescription,
   pickBestDescription,
   CAREER_PREFIXES,
+  HIGH_CONFIDENCE_JOB_SOURCES,
+  BOARD_JOB_SOURCES,
 };

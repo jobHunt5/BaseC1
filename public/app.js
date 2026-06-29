@@ -22,6 +22,18 @@ const App = (() => {
     areaLayer: null,
     pipelineCompanies: [],
     enrichConcurrency: 6,
+    areaJobs: [],
+    areaJobsSuburb: '',
+    areaJobsLoading: false,
+    search: '',
+    sortBy: 'best',
+    quickFilters: { roles: false, verified: false, email: false, team: false, match: false },
+    pipelineSearch: '',
+    pipelineKind: 'interested',
+    pipelineSort: 'best',
+    pageSize: 60,
+    shownCount: 60,
+    _listSig: null,
   };
 
   const _enriching = new Set();
@@ -142,12 +154,28 @@ const App = (() => {
           closeProfile();
         } else if (document.getElementById('detailPanel').classList.contains('open')) {
           closeDetail();
+        } else if (document.activeElement?.id === 'companySearch') {
+          state.search = '';
+          document.getElementById('companySearch').value = '';
+          renderCompanies(true);
+          document.getElementById('companySearch').blur();
+        }
+        return;
+      }
+      // "/" focuses the company search (unless already typing in a field).
+      if (e.key === '/' && state.view === 'scan') {
+        const t = e.target;
+        const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+        if (!typing) {
+          const el = document.getElementById('companySearch');
+          if (el) { e.preventDefault(); el.focus(); }
         }
       }
     });
 
     loadProfile();
     renderIndustryFilters();
+    initListControls();
     refreshHealth();
     restoreSessionScan();
     syncMapModeBtn();
@@ -666,6 +694,7 @@ const App = (() => {
       }
       const data = await resp.json();
       state.companies = data.companies || [];
+      state.shownCount = state.pageSize;
       saveSessionScan(state.selBounds);
       renderCompanies(true);
       addMarkers();
@@ -673,6 +702,9 @@ const App = (() => {
       toast(`Found ${data.count} businesses — loading contact info`, 'success');
       // Kick off background enrichment for everything else.
       backgroundEnrichAll();
+      // Area-wide job-board search — catches roles whose employer wasn't found
+      // in the Places sweep. Runs independently so it never blocks the map.
+      if (data.areaJobsEnabled) fetchAreaJobs(payload);
     } catch (err) {
       console.error(err);
       toast('Scan failed: ' + err.message, 'error');
@@ -683,6 +715,61 @@ const App = (() => {
       btn.style.display = 'none';
       progress.classList.remove('show');
     }
+  }
+
+  async function fetchAreaJobs(bounds) {
+    state.areaJobsLoading = true;
+    state.areaJobs = [];
+    renderCompanies();
+    try {
+      const resp = await fetch('/api/scan/area-jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bounds),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      state.areaJobs = data.jobs || [];
+      state.areaJobsSuburb = data.suburb || '';
+      if (state.areaJobs.length) {
+        toast(`+${state.areaJobs.length} more roles on job boards in ${state.areaJobsSuburb || 'this area'}`, 'success');
+      }
+    } catch (err) {
+      console.warn('area jobs failed', err);
+    } finally {
+      state.areaJobsLoading = false;
+      renderCompanies();
+    }
+  }
+
+  function renderAreaJobsBanner() {
+    if (state.view !== 'scan') return '';
+    if (state.areaJobsLoading) {
+      return `<div class="area-jobs-banner loading">⏳ Searching Seek, Indeed, LinkedIn &amp; Jora for more roles in this area…</div>`;
+    }
+    if (!state.areaJobs.length) return '';
+    const labels = { seek: 'Seek', indeed: 'Indeed', 'linkedin-jobs': 'LinkedIn', jora: 'Jora' };
+    const rows = state.areaJobs.slice(0, 40).map(j => {
+      const src = labels[j.source] || j.source;
+      const co = j.company_name ? `<span class="area-job-co">${escapeHtml(j.company_name)}</span>` : '';
+      return `
+        <a class="area-job-row" href="${escapeAttr(j.url)}" target="_blank" rel="noopener">
+          <div class="area-job-main">
+            <div class="area-job-title">${escapeHtml(j.title)}</div>
+            ${co}
+          </div>
+          <div class="area-job-meta">
+            ${j.location ? `<span>📍 ${escapeHtml(j.location)}</span>` : ''}
+            ${j.remote ? `<span class="remote">🌐 Remote</span>` : ''}
+            <span class="trust-badge board">${escapeHtml(src)}</span>
+          </div>
+        </a>`;
+    }).join('');
+    return `
+      <details class="area-jobs-banner" open>
+        <summary>📋 ${state.areaJobs.length} extra roles on job boards${state.areaJobsSuburb ? ` · ${escapeHtml(state.areaJobsSuburb)}` : ''} <span class="area-jobs-hint">(employers not necessarily on the map)</span></summary>
+        <div class="area-jobs-list">${rows}</div>
+      </details>`;
   }
 
   // ---- markers ------------------------------------------------------------
@@ -700,9 +787,15 @@ const App = (() => {
   }
 
   function companiesForMap() {
+    // Markers mirror exactly what the list shows, so search + quick filters
+    // narrow the map too.
+    const q = state.search.trim();
     return state.companies.filter(c => {
       if (c.status === 'skipped') return false;
-      return companyPassesIndustryFilter(c);
+      if (!companyPassesIndustryFilter(c)) return false;
+      if (!companyPassesQuickFilters(c)) return false;
+      if (!companyMatchesSearch(c, q)) return false;
+      return true;
     });
   }
 
@@ -783,6 +876,11 @@ const App = (() => {
     if (c.enrich_error) {
       return `<div class="trust-banner warn">⚠ ${escapeHtml(c.enrich_error)} — data may be incomplete. <button class="link-btn-small" onclick="App.reVerifyCompany('${escapeAttr(c.id)}')">Try again</button></div>`;
     }
+    const trust = c.profile?.trust;
+    if (trust?.summary) {
+      const cls = trust.level === 'high' ? '' : (trust.level === 'medium' ? ' medium' : ' warn');
+      return `<div class="trust-banner${cls}">Trust — ${escapeHtml(trust.summary)}.</div>`;
+    }
     const parts = [];
     if (isVerifiedEmail(c)) parts.push('verified email on their domain');
     else if (c.email) parts.push('email found but not domain-verified');
@@ -790,24 +888,25 @@ const App = (() => {
     if ((c.team || []).some(isVerifiedLinkedIn)) parts.push('verified LinkedIn where sourced from their site');
     if (unverifiedLi) parts.push(`${unverifiedLi} team link${unverifiedLi !== 1 ? 's' : ''} need manual check`);
     const summary = parts.length ? parts.join(' · ') : 'confirm contact details on their website before outreach';
-    return `<div class="trust-banner">Trust mode — ${escapeHtml(summary)}.</div>`;
+    return `<div class="trust-banner">Trust — ${escapeHtml(summary)}.</div>`;
   }
 
   function jobTrustLabel(source, job) {
-    if (['greenhouse', 'lever', 'workable', 'ashby', 'json-ld'].includes(source)) {
+    const conf = job?.confidence || null;
+    if (conf === 'verified' || ['greenhouse', 'lever', 'workable', 'ashby', 'json-ld', 'jobadder'].includes(source)) {
       return '<span class="trust-badge verified">✓ Verified listing</span>';
     }
-    if (['seek', 'indeed', 'linkedin-jobs', 'jora'].includes(source)) {
+    if (conf === 'board' || ['seek', 'indeed', 'linkedin-jobs', 'jora'].includes(source)) {
       const label = { seek: 'Seek', indeed: 'Indeed', 'linkedin-jobs': 'LinkedIn Jobs', jora: 'Jora' }[source] || source;
-      return `<span class="trust-badge found">Found on ${escapeHtml(label)}</span>`;
+      return `<span class="trust-badge board">Job board · ${escapeHtml(label)}</span>`;
     }
-    if (source === 'careers-page') {
+    if (conf === 'found' || source === 'careers-page') {
       const hasRealLink = job?.url && !/^https?:\/\/[^/]+\/?$/i.test(job.url.replace(/\/+$/, ''));
       return hasRealLink
         ? '<span class="trust-badge found">Found on careers page</span>'
         : '<span class="trust-badge warn">Unverified — confirm on their site</span>';
     }
-    return '';
+    return '<span class="trust-badge warn">Unverified</span>';
   }
 
   let _renderTimer = null;
@@ -825,10 +924,83 @@ const App = (() => {
     }, 120);
   }
 
+  // --- search / sort / quick filters --------------------------------------
+
+  function companyOpenRoles(c) { return (c.jobs || []).length; }
+
+  function companyIsVerified(c) {
+    if (c.profile?.trust?.level === 'high') return true;
+    if (isVerifiedEmail(c)) return true;
+    if ((c.jobs || []).some(j => j.confidence === 'verified' || j.is_verified)) return true;
+    if (c.profile?.linkedin?.verified) return true;
+    if ((c.team || []).some(isVerifiedLinkedIn)) return true;
+    return false;
+  }
+
+  function companyMatchCount(c) {
+    const kws = profileSkillKeywords();
+    return (c.opportunities || []).filter(o => oppMatchesProfile(o, kws)).length;
+  }
+
+  function companyMatchesSearch(c, q) {
+    if (!q) return true;
+    const hay = [
+      c.name, c.type, c.address, c.description,
+      ...(c.opportunities || []),
+      ...((c.jobs || []).map(j => j.title)),
+      hostnameOf(c.website || ''),
+    ].join(' ').toLowerCase();
+    // every whitespace-separated token must appear somewhere
+    return q.toLowerCase().split(/\s+/).filter(Boolean).every(tok => hay.includes(tok));
+  }
+
+  function companyPassesQuickFilters(c) {
+    const qf = state.quickFilters;
+    if (qf.roles && companyOpenRoles(c) === 0) return false;
+    if (qf.verified && !companyIsVerified(c)) return false;
+    if (qf.email && !isVerifiedEmail(c)) return false;
+    if (qf.team && !(c.team || []).length) return false;
+    if (qf.match && companyMatchCount(c) === 0) return false;
+    return true;
+  }
+
+  function companyRank(c) {
+    // Composite "best" score: verified > roles > match > enriched > team.
+    let s = 0;
+    if (companyIsVerified(c)) s += 1000;
+    s += Math.min(companyOpenRoles(c), 20) * 40;
+    s += companyMatchCount(c) * 25;
+    if (isVerifiedEmail(c)) s += 60;
+    if (c.enriched_at) s += 10;
+    s += Math.min((c.team || []).length, 10) * 3;
+    return s;
+  }
+
+  function sortCompanies(list, by = state.sortBy, source = state.companies) {
+    const idx = new Map(source.map((c, i) => [String(c.id), i]));
+    const arr = list.slice();
+    arr.sort((a, b) => {
+      switch (by) {
+        case 'roles':    return companyOpenRoles(b) - companyOpenRoles(a) || companyRank(b) - companyRank(a);
+        case 'verified': return (companyIsVerified(b) ? 1 : 0) - (companyIsVerified(a) ? 1 : 0) || companyRank(b) - companyRank(a);
+        case 'match':    return companyMatchCount(b) - companyMatchCount(a) || companyRank(b) - companyRank(a);
+        case 'name':     return String(a.name || '').localeCompare(String(b.name || ''));
+        case 'recent':   return (idx.get(String(b.id)) ?? 0) - (idx.get(String(a.id)) ?? 0);
+        case 'best':
+        default:         return companyRank(b) - companyRank(a);
+      }
+    });
+    return arr;
+  }
+
   function filteredCompanies() {
+    const q = state.search.trim();
     return state.companies.filter(c => {
       if (c.status === 'skipped') return false;
-      return companyPassesIndustryFilter(c);
+      if (!companyPassesIndustryFilter(c)) return false;
+      if (!companyPassesQuickFilters(c)) return false;
+      if (!companyMatchesSearch(c, q)) return false;
+      return true;
     });
   }
 
@@ -855,32 +1027,100 @@ const App = (() => {
     try {
       const data = await fetch(`/api/companies/pipeline?kind=${encodeURIComponent(kind)}`).then(r => r.json());
       state.pipelineCompanies = data.companies || [];
-      if (!state.pipelineCompanies.length) {
-        const label = kind === 'interested' ? 'saved' : 'applied';
-        listEl.innerHTML = `<div class="empty-state"><div class="big-icon">${kind === 'interested' ? '💜' : '✓'}</div><h3>No ${label} companies yet</h3><p>Mark companies from your scan results — they appear here across all areas.</p></div>`;
-        return;
-      }
-      listEl.innerHTML = state.pipelineCompanies.map(renderCard).join('');
+      state.pipelineKind = kind;
+      renderPipelineList();
     } catch {
       listEl.innerHTML = '<div class="empty-state"><div class="big-icon">⚠</div><h3>Could not load</h3><p>Check your connection and try again.</p></div>';
     }
   }
 
+  function renderPipelineList() {
+    const listEl = document.getElementById('pipelineList');
+    if (!listEl) return;
+    const kind = state.pipelineKind || 'interested';
+    const all = state.pipelineCompanies || [];
+    if (!all.length) {
+      const label = kind === 'interested' ? 'saved' : 'applied';
+      listEl.innerHTML = `<div class="empty-state"><div class="big-icon">${kind === 'interested' ? '💜' : '✓'}</div><h3>No ${label} companies yet</h3><p>Mark companies from your scan results — they appear here across all areas.</p></div>`;
+      return;
+    }
+    const q = (state.pipelineSearch || '').trim();
+    const filtered = q ? all.filter(c => companyMatchesSearch(c, q)) : all;
+    if (!filtered.length) {
+      listEl.innerHTML = `<div class="empty-state"><div class="big-icon">🔍</div><h3>No matches</h3><p>No saved companies match “${escapeHtml(q)}”.</p></div>`;
+      return;
+    }
+    const sorted = sortCompanies(filtered, state.pipelineSort, all);
+    listEl.innerHTML = sorted.map(renderCard).join('');
+  }
+
+  function updateResultCount(shown) {
+    const el = document.getElementById('resultCount');
+    if (!el) return;
+    const total = state.companies.filter(c => c.status !== 'skipped').length;
+    if (!total) { el.textContent = ''; return; }
+    el.textContent = shown === total
+      ? `${total} found`
+      : `${shown} of ${total}`;
+  }
+
+  let _listObserver = null;
+
   function renderCompaniesNow() {
     const list = document.getElementById('companyList');
-    const filtered = filteredCompanies();
+    const filtered = sortCompanies(filteredCompanies());
     refreshPipelineCounts();
+    syncToolbarState();
+    updateResultCount(filtered.length);
+
+    const areaJobsHTML = renderAreaJobsBanner();
 
     if (state.companies.length === 0) {
-      list.innerHTML = `<div class="empty-state"><div class="big-icon">🗺</div><h3>No area scanned yet</h3><p>Click <strong>Draw area</strong> and drag a rectangle on the map.</p></div>`;
+      list.innerHTML = areaJobsHTML || `<div class="empty-state"><div class="big-icon">🗺</div><h3>No area scanned yet</h3><p>Click <strong>Draw area</strong> and drag a rectangle on the map.</p></div>`;
       return;
     }
     if (filtered.length === 0) {
-      list.innerHTML = `<div class="empty-state"><div class="big-icon">🔍</div><h3>No matches</h3><p>Try a different filter or scan a larger area.</p></div>`;
+      const searching = state.search.trim() || Object.values(state.quickFilters).some(Boolean);
+      const body = searching
+        ? `<div class="empty-state"><div class="big-icon">🔍</div><h3>No matches</h3><p>Nothing fits your search and filters. <button class="link-btn-small" onclick="App.resetListControls()">Reset filters</button></p></div>`
+        : `<div class="empty-state"><div class="big-icon">🔍</div><h3>No matches</h3><p>Try a different industry filter or scan a larger area.</p></div>`;
+      list.innerHTML = areaJobsHTML + body;
       return;
     }
 
-    list.innerHTML = filtered.map(renderCard).join('');
+    // Reset the page window whenever the filter/sort signature changes, so a
+    // new search starts from the top instead of keeping a huge expanded list.
+    const sig = JSON.stringify([state.search, state.sortBy, state.quickFilters, state.activeCats]);
+    if (sig !== state._listSig) {
+      state._listSig = sig;
+      state.shownCount = state.pageSize;
+    }
+
+    const shown = Math.min(state.shownCount, filtered.length);
+    const remaining = filtered.length - shown;
+    const cardsHTML = filtered.slice(0, shown).map(renderCard).join('');
+    const moreHTML = remaining > 0
+      ? `<button type="button" class="load-more-btn" id="loadMoreBtn" onclick="App.loadMoreCompanies()">Load more · ${remaining} more</button>`
+      : '';
+
+    list.innerHTML = areaJobsHTML + cardsHTML + moreHTML;
+
+    // Auto-load the next page when the button scrolls into view.
+    if (_listObserver) { _listObserver.disconnect(); _listObserver = null; }
+    if (remaining > 0) {
+      const btn = document.getElementById('loadMoreBtn');
+      if (btn && 'IntersectionObserver' in window) {
+        _listObserver = new IntersectionObserver((entries) => {
+          if (entries.some(e => e.isIntersecting)) loadMoreCompanies();
+        }, { root: list, rootMargin: '300px' });
+        _listObserver.observe(btn);
+      }
+    }
+  }
+
+  function loadMoreCompanies() {
+    state.shownCount += state.pageSize;
+    renderCompaniesNow();
   }
 
   function renderCard(c) {
@@ -942,15 +1182,18 @@ const App = (() => {
     const logo = faviconHtml(c, 36);
     const matchBadge = matchCount > 0
       ? `<span class="match-pill" title="${matchCount} of your skills match likely opportunities">🎯 Match</span>` : '';
+    const verifiedBadge = companyIsVerified(c)
+      ? `<span class="verified-pill" title="Verified data — sourced from their own website / ATS">✓ Verified</span>` : '';
 
     return `
-      <div class="company-card ${isApplied ? 'applied' : ''} ${isSkipped ? 'skipped' : ''} ${String(state.selectedId) === String(c.id) ? 'selected' : ''}" data-id="${cid}">
+      <div class="company-card ${isApplied ? 'applied' : ''} ${isSkipped ? 'skipped' : ''} ${!isApplied && verifiedBadge ? 'is-verified' : ''} ${String(state.selectedId) === String(c.id) ? 'selected' : ''}" data-id="${cid}">
         <div class="card-top">
           ${logo}
           <div class="card-info">
             <div class="company-name-row">
               <span class="company-name">${escapeHtml(c.name)}</span>
               ${isApplied ? '<span class="applied-tick" title="Applied">✓</span>' : ''}
+              ${verifiedBadge}
               ${matchBadge}
             </div>
             <div class="company-type">${escapeHtml(c.type || 'Business')}${c.address ? ' · ' + escapeHtml(suburbOf(c.address)) : ''}</div>
@@ -1076,37 +1319,73 @@ const App = (() => {
   function renderTeamCard(c, member) {
     const initials = avatarInitials(member.name);
     const hue = stringHue(member.name);
-    const verified = isVerifiedLinkedIn(member);
-    const profileUrl = verified
-      ? member.linkedin_url
-      : linkedinSearchUrl(member.name, c.name, c.address);
+    const verified = member.linkedin_verified || isVerifiedLinkedIn(member);
+    const profileUrl = verified ? member.linkedin_url : null;
+    const searchUrl = member.linkedin_search_url || linkedinSearchUrl(member.name, c.name, c.address);
     const linkLabel = verified
       ? (member.linkedin_source === 'website'
-        ? `<span class="li-found">✓ LinkedIn (from their website) ↗</span>`
+        ? `<a class="li-found" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">✓ LinkedIn (from their website) ↗</a>`
         : member.linkedin_source === 'linkedin_company'
-          ? `<span class="li-found">✓ Verified on company LinkedIn ↗</span>`
-          : `<span class="li-found">✓ Verified ↗</span>`)
-      : `<span class="li-search">Search LinkedIn ↗</span>`;
+          ? `<a class="li-found" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">✓ Verified on company LinkedIn ↗</a>`
+          : `<a class="li-found" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">✓ Verified profile ↗</a>`)
+      : `<span class="li-none">No verified LinkedIn</span>
+         <a class="li-search-btn" href="${escapeAttr(searchUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Search LinkedIn ↗</a>`;
     const bioHTML = member.bio
       ? `<div class="team-bio">${escapeHtml(member.bio.slice(0, 140))}${member.bio.length > 140 ? '…' : ''}</div>`
       : '';
     const emailHTML = member.email && emailMatchesWebsite(member.email, c.website)
       ? `<div class="team-email"><a href="mailto:${escapeAttr(member.email)}" onclick="event.stopPropagation()">${escapeHtml(member.email)}</a></div>`
       : '';
+    const Tag = verified ? 'a' : 'div';
+    const attrs = verified
+      ? `href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" title="Open verified LinkedIn profile"`
+      : `title="No verified LinkedIn — use search link below"`;
     return `
-      <a class="team-card ${verified ? 'has-li verified-li' : 'search-li'}"
-         href="${escapeAttr(profileUrl)}"
-         target="_blank" rel="noopener"
-         title="${escapeAttr(verified ? 'Open verified LinkedIn profile' : 'Search LinkedIn for ' + member.name + ' at ' + c.name)}">
+      <${Tag} class="team-card ${verified ? 'has-li verified-li' : 'no-li'}" ${attrs}>
         <div class="team-avatar" style="background:hsl(${hue}, 50%, 30%); color:hsl(${hue}, 90%, 88%)">${escapeHtml(initials)}</div>
         <div class="team-info">
           <div class="team-name">${escapeHtml(member.name)}</div>
           ${member.title ? `<div class="team-title">${escapeHtml(member.title)}</div>` : ''}
           ${bioHTML}
           ${emailHTML}
-          ${linkLabel}
+          <div class="team-li-row">${linkLabel}</div>
         </div>
-      </a>`;
+      </${Tag}>`;
+  }
+
+  function renderLinkedInSection(c) {
+    const li = c.profile?.linkedin || {};
+    const peopleSearch = linkedinPeopleSearchUrl(c);
+    const verifiedBlock = li.verified && li.company_url
+      ? `<a class="linkedin-verified-link" href="${escapeAttr(li.company_url)}" target="_blank" rel="noopener">✓ ${escapeHtml(li.status_label)} ↗</a>
+         ${li.people_url ? `<a class="mini-btn mini-btn-link" href="${escapeAttr(li.people_url)}" target="_blank" rel="noopener">Browse employees on LinkedIn ↗</a>` : ''}`
+      : `<div class="linkedin-none-badge">${escapeHtml(li.status_label || 'No verified LinkedIn found')}</div>
+         <div class="section-note">${escapeHtml(li.message || 'We only show a direct company LinkedIn link when it appears on their website.')}</div>`;
+  return `
+      <div class="detail-section linkedin-section">
+        <div class="detail-label">LinkedIn</div>
+        ${verifiedBlock}
+        <div class="linkedin-search-row">
+          <a class="mini-btn mini-btn-link" href="${escapeAttr(peopleSearch)}" target="_blank" rel="noopener">Search people at ${escapeHtml(c.name)} on LinkedIn ↗</a>
+        </div>
+      </div>`;
+  }
+
+  function renderCompanyLinksSection(c) {
+    const links = c.profile?.links || [];
+    if (!links.length) return '';
+    const icons = {
+      website: '🌐', careers: '💼', linkedin_company: '💼',
+      instagram: '📷', facebook: '👍', twitter: '𝕏', youtube: '▶', tiktok: '🎵',
+    };
+    const chips = links.map(l =>
+      `<a class="company-link-chip ${l.verified ? 'verified' : ''}" href="${escapeAttr(l.url)}" target="_blank" rel="noopener">${icons[l.kind] || '🔗'} ${escapeHtml(l.label)} ↗</a>`,
+    ).join('');
+    return `
+      <div class="detail-section">
+        <div class="detail-label">Company links</div>
+        <div class="company-links-row">${chips}</div>
+      </div>`;
   }
 
   function renderTeamEmptyActions(c) {
@@ -1170,12 +1449,12 @@ const App = (() => {
     const jobsHTML = jobs.length
       ? jobs.map(renderJobRow).join('')
       : `<div class="empty-hint">${c.careers_url
-          ? `No open roles detected automatically. <a href="${escapeAttr(c.careers_url)}" target="_blank" rel="noopener">Open careers page ↗</a> or try ↻ Scan jobs (includes Seek, Indeed, LinkedIn).`
+          ? `No open roles detected on their careers page yet. <a href="${escapeAttr(c.careers_url)}" target="_blank" rel="noopener">Open careers page ↗</a> or try ↻ Scan jobs.`
           : c.enriched_at
             ? (state.hasSerperKey
-              ? 'No roles on their website or major job boards (Seek, Indeed, LinkedIn Jobs, Jora). Try ↻ Scan jobs or email them directly.'
-              : 'No careers page found. Add SERPER_API_KEY in .env to search Seek, Indeed &amp; LinkedIn Jobs globally.')
-            : '⏳ Checking website careers page and job boards…'}</div>`;
+              ? 'No roles on their website yet. Scan jobs checks careers page first, then Seek/Indeed only as fallback.'
+              : 'No careers page found. Add SERPER_API_KEY in .env for job-board fallback search.')
+            : '⏳ Scanning careers page, ATS boards, and company website…'}</div>`;
     return `
       <div class="detail-section jobs-section">
         <div class="detail-label">
@@ -1200,7 +1479,7 @@ const App = (() => {
       <div class="deep-scan">
         <div class="deep-scan-spinner"></div>
         <div class="deep-scan-title">Deep-scanning <strong>${escapeHtml(host)}</strong></div>
-        <div class="deep-scan-sub">Website careers · ATS APIs · Seek · Indeed · LinkedIn Jobs · team &amp; contact…</div>
+        <div class="deep-scan-sub">Careers page · ATS APIs · JobAdder · team · verified LinkedIn · contact…</div>
         <ul class="deep-scan-tasks">
           <li><span class="ds-dot"></span> Extracting careers email &amp; contact details</li>
           <li><span class="ds-dot"></span> Finding team members &amp; LinkedIn profiles</li>
@@ -1764,9 +2043,7 @@ const App = (() => {
       return;
     }
 
-    const websiteRow = c.website
-      ? `<div class="contact-row"><span class="contact-icon">🌐</span><a href="${escapeAttr(c.website)}" target="_blank" rel="noopener">${escapeHtml(hostnameOf(c.website))}</a></div>`
-      : `<div class="contact-row missing"><span class="contact-icon">🌐</span>No website found</div>`;
+    const trustBanner = buildTrustBanner(c);
 
     const emailRow = c.email
       ? (isVerifiedEmail(c)
@@ -1778,13 +2055,7 @@ const App = (() => {
       ? `<div class="contact-row"><span class="contact-icon">📞</span><a href="tel:${escapeAttr(c.phone)}">${escapeHtml(c.phone)}</a><button class="copy-btn" onclick="App.copy('${escapeAttr(c.phone)}')">Copy</button></div>`
       : '';
 
-    const careersRow = c.careers_url
-      ? `<div class="contact-row"><span class="contact-icon">💼</span><a href="${escapeAttr(c.careers_url)}" target="_blank" rel="noopener">Careers page →</a></div>`
-      : `<div class="contact-row missing"><span class="contact-icon">💼</span>No careers page found</div>`;
-
     const addressBit = c.address ? `<div class="contact-row"><span class="contact-icon">📌</span>${escapeHtml(c.address)}</div>` : '';
-
-    const trustBanner = buildTrustBanner(c);
 
     const otherEmails = (c.all_emails || []).filter(e => isPlausibleExtraEmail(e, c));
     const otherEmailsRow = otherEmails.length ? `
@@ -1798,17 +2069,22 @@ const App = (() => {
           </div>`).join('')}
       </div>` : '';
 
-    // Social profiles
-    const socials = c.socials || {};
-    const socialChips = Object.entries(socials).map(([k, url]) => {
-      const icon = { linkedin: '💼', instagram: '📷', facebook: '👍', twitter: '𝕏', youtube: '▶', tiktok: '🎵' }[k] || '🔗';
-      return `<a class="social-chip" href="${escapeAttr(url)}" target="_blank" rel="noopener">${icon} ${escapeHtml(k.charAt(0).toUpperCase() + k.slice(1))}</a>`;
-    }).join('');
-    const socialRow = socialChips ? `
+    // Social profiles — moved to Company links section when profile exists.
+    const socialRow = (!c.profile?.links?.length && (c.socials && Object.keys(c.socials).length)) ? (() => {
+      const socials = c.socials || {};
+      const socialChips = Object.entries(socials).map(([k, url]) => {
+        const icon = { linkedin: '💼', instagram: '📷', facebook: '👍', twitter: '𝕏', youtube: '▶', tiktok: '🎵' }[k] || '🔗';
+        return `<a class="social-chip" href="${escapeAttr(url)}" target="_blank" rel="noopener">${icon} ${escapeHtml(k.charAt(0).toUpperCase() + k.slice(1))}</a>`;
+      }).join('');
+      return `
       <div class="detail-section">
         <div class="detail-label">Social profiles</div>
         <div class="socials-row">${socialChips}</div>
-      </div>` : '';
+      </div>`;
+    })() : '';
+
+    const companyLinksSection = renderCompanyLinksSection(c);
+    const linkedinSection = renderLinkedInSection(c);
 
     // Description (from meta description / og:description / page text)
     const descSection = c.description ? `
@@ -1829,15 +2105,15 @@ const App = (() => {
       ${descSection}
       <div class="detail-section">
         <div class="detail-label">
-          <span>Contact &amp; Links</span>
+          <span>Contact</span>
           ${c.website ? `<button class="mini-btn" onclick="App.reVerifyCompany('${escapeAttr(c.id)}')">↻ Re-scan website</button>` : ''}
         </div>
-        ${websiteRow}
         ${emailRow}
         ${phoneRow}
-        ${careersRow}
         ${addressBit}
       </div>
+      ${companyLinksSection}
+      ${linkedinSection}
       ${teamSection}
       ${jobsSection}
       ${socialRow}
@@ -2120,6 +2396,126 @@ const App = (() => {
 
   // ---- filters / tabs -----------------------------------------------------
 
+  const LIST_PREFS_KEY = 'areahunt.listPrefs.v1';
+
+  function loadListPrefs() {
+    try {
+      const raw = localStorage.getItem(LIST_PREFS_KEY);
+      if (!raw) return;
+      const p = JSON.parse(raw);
+      if (typeof p.sortBy === 'string') state.sortBy = p.sortBy;
+      if (p.quickFilters && typeof p.quickFilters === 'object') {
+        for (const k of Object.keys(state.quickFilters)) {
+          state.quickFilters[k] = !!p.quickFilters[k];
+        }
+      }
+      if (typeof p.pipelineSort === 'string') state.pipelineSort = p.pipelineSort;
+    } catch {}
+  }
+
+  function saveListPrefs() {
+    try {
+      localStorage.setItem(LIST_PREFS_KEY, JSON.stringify({
+        sortBy: state.sortBy,
+        quickFilters: state.quickFilters,
+        pipelineSort: state.pipelineSort,
+      }));
+    } catch {}
+  }
+
+  let _listControlsBound = false;
+  function initListControls() {
+    if (_listControlsBound) return;
+    loadListPrefs();
+    const searchEl = document.getElementById('companySearch');
+    const clearEl = document.getElementById('clearCompanySearch');
+    const sortEl = document.getElementById('sortSelect');
+    const quickEl = document.getElementById('quickFilters');
+    if (searchEl) {
+      searchEl.addEventListener('input', () => {
+        state.search = searchEl.value;
+        renderCompanies();
+        addMarkers();
+      });
+    }
+    if (clearEl) {
+      clearEl.addEventListener('click', () => {
+        state.search = '';
+        if (searchEl) searchEl.value = '';
+        searchEl?.focus();
+        renderCompanies(true);
+        addMarkers();
+      });
+    }
+    if (sortEl) {
+      sortEl.value = state.sortBy;
+      sortEl.addEventListener('change', () => {
+        state.sortBy = sortEl.value;
+        saveListPrefs();
+        renderCompanies(true);
+      });
+    }
+    if (quickEl) {
+      quickEl.querySelectorAll('.quick-chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const key = btn.dataset.qf;
+          state.quickFilters[key] = !state.quickFilters[key];
+          saveListPrefs();
+          renderCompanies(true);
+          addMarkers();
+        });
+      });
+    }
+    const pipeSearch = document.getElementById('pipelineSearch');
+    const pipeClear = document.getElementById('clearPipelineSearch');
+    const pipeSort = document.getElementById('pipelineSortSelect');
+    if (pipeSearch) {
+      pipeSearch.addEventListener('input', () => {
+        state.pipelineSearch = pipeSearch.value;
+        document.getElementById('pipelineSearchWrap')?.classList.toggle('has-text', !!pipeSearch.value.trim());
+        renderPipelineList();
+      });
+    }
+    if (pipeClear) {
+      pipeClear.addEventListener('click', () => {
+        state.pipelineSearch = '';
+        if (pipeSearch) pipeSearch.value = '';
+        document.getElementById('pipelineSearchWrap')?.classList.remove('has-text');
+        renderPipelineList();
+      });
+    }
+    if (pipeSort) {
+      pipeSort.value = state.pipelineSort;
+      pipeSort.addEventListener('change', () => {
+        state.pipelineSort = pipeSort.value;
+        saveListPrefs();
+        renderPipelineList();
+      });
+    }
+    _listControlsBound = true;
+  }
+
+  function syncToolbarState() {
+    const wrap = document.getElementById('listSearchWrap');
+    if (wrap) wrap.classList.toggle('has-text', !!state.search.trim());
+    const quickEl = document.getElementById('quickFilters');
+    if (quickEl) {
+      quickEl.querySelectorAll('.quick-chip').forEach(btn => {
+        btn.classList.toggle('active', !!state.quickFilters[btn.dataset.qf]);
+      });
+    }
+    const sortEl = document.getElementById('sortSelect');
+    if (sortEl && sortEl.value !== state.sortBy) sortEl.value = state.sortBy;
+  }
+
+  function resetListControls() {
+    state.search = '';
+    state.quickFilters = { roles: false, verified: false, email: false, team: false, match: false };
+    const searchEl = document.getElementById('companySearch');
+    if (searchEl) searchEl.value = '';
+    renderCompanies(true);
+  }
+
   function renderIndustryFilters() {
     const el = document.getElementById('industryFilters');
     if (!el || typeof AreaHuntIndustries === 'undefined') return;
@@ -2273,7 +2669,7 @@ const App = (() => {
     verifyCompanyEmail, generateOutreachEmails, applyOutreachVariant, sendOutreachEmail,
     openProfile, closeProfile, closeProfileBackdrop, saveProfile, logout,
     resolveTeamLinkedIn, discoverPeople, reVerifyCompany, toggleMapMode,
-    openAccountMenu,
+    openAccountMenu, resetListControls, loadMoreCompanies,
   };
 })();
 

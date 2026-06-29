@@ -168,10 +168,84 @@ function looksLikeAddress(text) {
   return false;
 }
 
+// Cookie consent, privacy, and legal banners scraped as fake "people".
+const BANNER_NAME_RE = /^(cookie\s*(consent|policy|settings|preferences|notice)?|consent|privacy\s*(policy|notice|settings)?|terms|gdpr|we\s+value\s+your\s+privacy|your\s+privacy|accept\s+(all\s+)?cookies?|manage\s+cookies?|newsletter|subscribe|sign\s*up|log\s*in|sign\s*in|menu|search)$/i;
+const BANNER_BIO_RE = /\b(we use cookies|this (website|site) uses cookies|cookies (to|keep|help|are)|by (continuing|clicking|using)|accept (all )?cookies|your (privacy|consent)|personali[sz]e\b.*\b(content|ads|experience)|opt[- ]?out|privacy policy|gdpr|consent to)\b/i;
+
+function looksLikeConsentBanner(member) {
+  const name = String(member?.name || '').replace(/\s+/g, ' ').trim();
+  if (BANNER_NAME_RE.test(name)) return true;
+  const bio = String(member?.bio || '');
+  if (BANNER_BIO_RE.test(bio)) return true;
+  if (BANNER_BIO_RE.test(member?.title || '')) return true;
+  return false;
+}
+
+// Positive gate: does this string actually read like a person's name?
+// Real names are short, title-cased, mostly alphabetic, and not sentences.
+// This generically rejects headings, banners, and marketing blurbs for ANY
+// company without needing a phrase-by-phrase denylist.
+const HONORIFIC_RE = /^(mr|mrs|ms|miss|mx|dr|prof|professor|sir|dame|rev)\.?$/i;
+
+// Words that appear in website chrome / headings but are virtually never parts
+// of a real person's name. Deliberately excludes common-word surnames/given
+// names (Brown, Green, Baker, Cook, Hill, Stone, Mark, Grace, Hope, Rose, …)
+// so we don't reject real people. This is a token denylist, not a phrase one,
+// so it generalises across every company.
+const NON_NAME_TOKENS = new Set([
+  // pronouns / function words
+  'we', 'our', 'us', 'you', 'your', 'i', 'me', 'my', 'the', 'a', 'an', 'and',
+  'or', 'of', 'to', 'for', 'with', 'this', 'that', 'these', 'those', 'it', 'its',
+  // web chrome / legal
+  'cookie', 'cookies', 'consent', 'privacy', 'policy', 'policies', 'terms',
+  'conditions', 'gdpr', 'settings', 'preferences', 'newsletter', 'subscribe',
+  'signup', 'login', 'logout', 'register', 'account', 'menu', 'search', 'home',
+  'about', 'contact', 'faq', 'faqs', 'questions', 'question', 'frequently',
+  'asked', 'help', 'welcome', 'hello', 'overview', 'summary', 'sitemap',
+  'copyright', 'reserved', 'rights', 'disclaimer',
+  // generic site sections
+  'mission', 'vision', 'values', 'office', 'headquarters', 'hq', 'location',
+  'locations', 'services', 'solutions', 'team', 'staff', 'careers', 'career',
+  'jobs', 'news', 'blog', 'events', 'gallery', 'portfolio', 'projects',
+  'testimonials', 'reviews', 'pricing', 'plans', 'features', 'resources',
+  'downloads', 'partners', 'clients', 'customers', 'company',
+  // CTA / verbs / adverbs
+  'view', 'learn', 'read', 'click', 'here', 'more', 'today', 'now', 'get',
+  'started', 'find', 'out', 'discover', 'explore', 'see', 'browse', 'apply',
+  'join', 'book', 'call', 'email', 'send', 'submit', 'download', 'sign', 'up',
+  'in', 'next', 'previous', 'back', 'close', 'open', 'accept', 'decline',
+  'manage', 'continue', 'load', 'show', 'hide',
+]);
+
+function looksLikePersonName(name) {
+  let t = String(name || '').replace(/\s+/g, ' ').trim();
+  if (!t || t.length < 4 || t.length > 60) return false;
+  // Sentence punctuation rules it out (but "." for initials/honorifics is fine).
+  if (/[?!,:;@/\\|()<>{}\[\]]/.test(t)) return false;
+  if (/\d/.test(t)) return false;                          // digits = not a name
+  let words = t.split(' ').filter(Boolean);
+  if (words.length && HONORIFIC_RE.test(words[0])) words = words.slice(1);
+  if (words.length < 2 || words.length > 5) return false;  // "Jane Doe" .. up to 5 parts
+  // Any web-chrome / heading word means it's not a person.
+  if (words.some(w => NON_NAME_TOKENS.has(w.toLowerCase().replace(/[.'’\-]+$/, '')))) {
+    return false;
+  }
+  const NAME_WORD = /^[A-ZÀ-Ý][A-Za-zÀ-ÿ'’\-]*$/;          // Title-cased, incl. O'Brien, Anne-Marie
+  const INITIAL = /^[A-ZÀ-Ý]\.?$/;                          // "J" or "J."
+  const PARTICLE = /^(van|von|de|del|della|di|da|du|la|le|el|al|bin|ibn|st|mc|mac)$/i;
+  const nameLike = words.filter(w => NAME_WORD.test(w) || INITIAL.test(w) || PARTICLE.test(w)).length;
+  if (nameLike / words.length < 0.7) return false;
+  // Need at least two genuinely capitalised parts (first + last).
+  const caps = words.filter(w => /^[A-ZÀ-Ý]/.test(w)).length;
+  return caps >= 2;
+}
+
 function isValidTeamMember(member) {
   if (!member?.name) return false;
   const name = String(member.name).trim();
   if (name.length < 4) return false;
+  if (looksLikeConsentBanner(member)) return false;
+  if (!looksLikePersonName(name)) return false;
   if (isPlaceName(name)) return false;
   if (isServiceName(name)) return false;
   if (looksLikeOfferingHeading(name)) return false;
@@ -201,6 +275,8 @@ module.exports = {
   looksLikeServiceTitle,
   looksLikeServiceMenu,
   looksLikeAddress,
+  looksLikeConsentBanner,
+  looksLikePersonName,
   isValidTeamMember,
   filterValidTeam,
 };

@@ -379,6 +379,29 @@ function listJobsForCompany(companyId) {
   return listJobsForCompanyStmt.all(companyId);
 }
 
+// Batch-load jobs for many companies in one query instead of N round-trips.
+// Returns a Map of company_id -> jobs[]. Chunked to stay well under SQLite's
+// bound-parameter limit.
+function jobsGroupedFor(ids) {
+  const map = new Map();
+  const unique = [...new Set((ids || []).filter(v => v != null))];
+  if (!unique.length) return map;
+  const CHUNK = 500;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const slice = unique.slice(i, i + CHUNK);
+    const placeholders = slice.map(() => '?').join(',');
+    const rows = db
+      .prepare(`SELECT * FROM jobs WHERE company_id IN (${placeholders}) ORDER BY company_id, id ASC`)
+      .all(...slice);
+    for (const r of rows) {
+      let arr = map.get(r.company_id);
+      if (!arr) { arr = []; map.set(r.company_id, arr); }
+      arr.push(r);
+    }
+  }
+  return map;
+}
+
 const setJobAppliedStmt = db.prepare(
   'UPDATE jobs SET applied = @applied, applied_at = @applied_at WHERE id = @id'
 );
@@ -553,6 +576,7 @@ module.exports = {
   upsertJob,
   syncJobsForCompany,
   listJobsForCompany,
+  jobsGroupedFor,
   setJobApplied,
   getJob,
   recordScan,

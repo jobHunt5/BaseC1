@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-<link rel="stylesheet" href="/styles.css?v=20260628outreach">
+<link rel="stylesheet" href="/styles.css?v=20260629perf">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script src="/mapTheme.js?v=20260628areas"></script>
@@ -147,7 +147,34 @@
   <div class="sidebar">
     <div class="sidebar-panel" id="sidebarScan">
       <div class="sidebar-header">
-        <div class="sidebar-title">Scan results</div>
+        <div class="sidebar-title-row">
+          <div class="sidebar-title">Scan results</div>
+          <div class="result-count" id="resultCount"></div>
+        </div>
+        <div class="list-toolbar">
+          <div class="list-search" id="listSearchWrap">
+            <span class="icon">🔍</span>
+            <input type="text" id="companySearch" placeholder="Search company, role or suburb…" autocomplete="off" />
+            <button type="button" class="clear-search" id="clearCompanySearch" title="Clear" aria-label="Clear search">✕</button>
+          </div>
+          <div class="sort-wrap">
+            <select id="sortSelect" class="sort-select" aria-label="Sort companies">
+              <option value="best">Best match</option>
+              <option value="roles">Most open roles</option>
+              <option value="verified">Verified first</option>
+              <option value="match">Skill match</option>
+              <option value="name">Name A–Z</option>
+              <option value="recent">Recently found</option>
+            </select>
+          </div>
+        </div>
+        <div class="quick-filters" id="quickFilters">
+          <button type="button" class="quick-chip" data-qf="roles">💼 Open roles</button>
+          <button type="button" class="quick-chip" data-qf="verified">✓ Verified</button>
+          <button type="button" class="quick-chip" data-qf="email">✉ Has email</button>
+          <button type="button" class="quick-chip" data-qf="team">👥 Has team</button>
+          <button type="button" class="quick-chip" data-qf="match">🎯 Matches me</button>
+        </div>
         <div class="filters" id="industryFilters"></div>
       </div>
       <div class="company-list" id="companyList">
@@ -168,13 +195,30 @@
       <h1>Saved &amp; applied</h1>
       <p>Companies you saved or applied to — kept across all map scans.</p>
     </header>
-    <div class="tabs pipeline-tabs">
-      <button type="button" class="tab active" id="pipeTabSaved" onclick="App.switchPipelineTab('interested')">
-        Saved <span class="tab-badge" id="tabSaved">0</span>
-      </button>
-      <button type="button" class="tab" id="pipeTabApplied" onclick="App.switchPipelineTab('applied')">
-        Applied <span class="tab-badge" id="tabApplied">0</span>
-      </button>
+    <div class="pipeline-controls">
+      <div class="tabs pipeline-tabs">
+        <button type="button" class="tab active" id="pipeTabSaved" onclick="App.switchPipelineTab('interested')">
+          Saved <span class="tab-badge" id="tabSaved">0</span>
+        </button>
+        <button type="button" class="tab" id="pipeTabApplied" onclick="App.switchPipelineTab('applied')">
+          Applied <span class="tab-badge" id="tabApplied">0</span>
+        </button>
+      </div>
+      <div class="list-search pipeline-search" id="pipelineSearchWrap">
+        <span class="icon">🔍</span>
+        <input type="text" id="pipelineSearch" placeholder="Search saved companies…" autocomplete="off" />
+        <button type="button" class="clear-search" id="clearPipelineSearch" title="Clear" aria-label="Clear search">✕</button>
+      </div>
+      <div class="sort-wrap">
+        <select id="pipelineSortSelect" class="sort-select" aria-label="Sort companies">
+          <option value="best">Best match</option>
+          <option value="roles">Most open roles</option>
+          <option value="verified">Verified first</option>
+          <option value="match">Skill match</option>
+          <option value="name">Name A–Z</option>
+          <option value="recent">Recently added</option>
+        </select>
+      </div>
     </div>
     <div class="company-list pipeline-page-list" id="pipelineList"></div>
   </div>
@@ -197,6 +241,6 @@
 
 <script src="/industries.js?v=1"></script>
 <script src="/authFlow.js?v=20260629auth6"></script>
-<script src="/app.js?v=20260629profile3"></script>
+<script src="/app.js?v=20260629perf"></script>
 </body>
 </html>

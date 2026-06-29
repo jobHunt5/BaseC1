@@ -60,7 +60,7 @@ const GOOGLE_INCLUDED_TYPES = [
 // AND general businesses (restaurants/retail/services/etc.) which are
 // excellent cold-email targets for freelance design / web / marketing work.
 const GOOGLE_TEXT_QUERIES = [
-  // ── tech / creative (most likely to have public job openings) ──
+  // ── tech / creative ──
   'design agency',
   'creative studio',
   'web design',
@@ -69,16 +69,83 @@ const GOOGLE_TEXT_QUERIES = [
   'digital marketing agency',
   'branding agency',
   'tech company',
-  // ── general businesses (cold-email targets for freelancers) ──
+  'startup',
+  'saas company',
+  // ── finance / insurance / professional ──
+  'insurance company',
+  'financial services',
+  'comparison website',
+  'fintech',
+  'accounting firm',
+  'law firm',
+  'consulting firm',
+  'recruitment agency',
+  'staffing agency',
+  // ── healthcare / education ──
+  'medical clinic',
+  'healthcare',
+  'dental clinic',
+  'pharmacy',
+  'university',
+  'training provider',
+  // ── hospitality / retail / trades ──
   'restaurant',
   'cafe',
-  'retail store',
-  'real estate agency',
-  'medical clinic',
-  'gym fitness',
-  'professional services',
   'hotel',
+  'retail store',
+  'supermarket',
+  'gym fitness',
+  'beauty salon',
+  'construction company',
+  'real estate agency',
+  'warehouse',
+  'logistics company',
+  // ── catch-all professional ──
+  'professional services',
+  'corporate office',
+  'head office',
+  'company office',
 ];
+
+const GOOGLE_FIELD_MASK = [
+  'places.id',
+  'places.displayName',
+  'places.formattedAddress',
+  'places.location',
+  'places.websiteUri',
+  'places.rating',
+  'places.types',
+  'places.primaryType',
+  'places.primaryTypeDisplayName',
+  'nextPageToken',
+].join(',');
+
+// Google Text Search (New) returns max 20 results per call but supports
+// pagination via nextPageToken (up to 3 pages = 60 results per query).
+const GOOGLE_MAX_PAGES = parseInt(process.env.GOOGLE_MAX_PAGES || '3', 10);
+// Split the bbox into a grid so each cell stays under the 60-result ceiling;
+// dense CBD areas otherwise silently drop businesses past the cap.
+const GOOGLE_GRID = Math.max(1, parseInt(process.env.GOOGLE_GRID || '2', 10));
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function tileBounds(bounds, grid) {
+  if (grid <= 1) return [bounds];
+  const latStep = (bounds.north - bounds.south) / grid;
+  const lngStep = (bounds.east - bounds.west) / grid;
+  const tiles = [];
+  for (let r = 0; r < grid; r++) {
+    for (let c = 0; c < grid; c++) {
+      tiles.push({
+        south: bounds.south + r * latStep,
+        north: bounds.south + (r + 1) * latStep,
+        west: bounds.west + c * lngStep,
+        east: bounds.west + (c + 1) * lngStep,
+      });
+    }
+  }
+  return tiles;
+}
 
 async function findViaGoogle(bounds) {
   const key = process.env.GOOGLE_MAPS_API_KEY;
@@ -89,73 +156,74 @@ async function findViaGoogle(bounds) {
     );
   }
 
-  const locationRestriction = {
-    rectangle: {
-      low:  { latitude: bounds.south, longitude: bounds.west },
-      high: { latitude: bounds.north, longitude: bounds.east },
-    },
-  };
-
   const results = new Map();
   const errors = [];
+  let queryCount = 0;
 
-  async function runTextQuery(q) {
-    try {
-      const resp = await axios.post(
-        'https://places.googleapis.com/v1/places:searchText',
-        {
-          textQuery: q,
-          locationRestriction,
-          maxResultCount: 20,
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': key,
-            'X-Goog-FieldMask': [
-              'places.id',
-              'places.displayName',
-              'places.formattedAddress',
-              'places.location',
-              'places.websiteUri',
-              'places.rating',
-              'places.types',
-              'places.primaryType',
-              'places.primaryTypeDisplayName',
-            ].join(','),
+  // Fetch up to GOOGLE_MAX_PAGES of results for a single (query, tile) pair.
+  async function runTextQuery(q, tile) {
+    const locationRestriction = {
+      rectangle: {
+        low:  { latitude: tile.south, longitude: tile.west },
+        high: { latitude: tile.north, longitude: tile.east },
+      },
+    };
+    let pageToken = null;
+    for (let page = 0; page < GOOGLE_MAX_PAGES; page++) {
+      queryCount++;
+      try {
+        const body = { textQuery: q, locationRestriction, maxResultCount: 20 };
+        if (pageToken) body.pageToken = pageToken;
+        const resp = await axios.post(
+          'https://places.googleapis.com/v1/places:searchText',
+          body,
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Goog-Api-Key': key,
+              'X-Goog-FieldMask': GOOGLE_FIELD_MASK,
+            },
+            timeout: 12000,
           },
-          timeout: 12000,
+        );
+        for (const p of resp.data?.places || []) {
+          if (!p.id || !p.location) continue;
+          if (results.has(p.id)) continue;
+          if (isIrrelevantGooglePlace(p)) continue;
+          results.set(p.id, normalizeGoogle(p));
         }
-      );
-      return { places: resp.data?.places || [], error: null };
-    } catch (err) {
-      const msg = err.response?.data?.error?.message || err.message;
-      console.warn('[google] text search failed:', q, msg);
-      return { places: [], error: msg };
-    }
-  }
-
-  const CONCURRENCY = 4;
-  for (let i = 0; i < GOOGLE_TEXT_QUERIES.length; i += CONCURRENCY) {
-    const batch = GOOGLE_TEXT_QUERIES.slice(i, i + CONCURRENCY);
-    const batchResults = await Promise.all(batch.map(runTextQuery));
-    for (const { places, error } of batchResults) {
-      if (error) errors.push(error);
-      for (const p of places) {
-        if (!p.id || !p.location) continue;
-        if (results.has(p.id)) continue;
-        if (isIrrelevantGooglePlace(p)) continue;
-        results.set(p.id, normalizeGoogle(p));
+        pageToken = resp.data?.nextPageToken || null;
+        if (!pageToken) break;
+        // Google requires a short delay before a page token becomes valid.
+        await sleep(2000);
+      } catch (err) {
+        const msg = err.response?.data?.error?.message || err.message;
+        console.warn('[google] text search failed:', q, msg);
+        errors.push(msg);
+        break;
       }
     }
   }
 
-  // If EVERY query failed, surface the Google error to the caller so the user
-  // sees the real reason (e.g. "Places API (New) is disabled in project X").
-  if (results.size === 0 && errors.length === GOOGLE_TEXT_QUERIES.length) {
+  const tiles = tileBounds(bounds, GOOGLE_GRID);
+  // Build all (query, tile) tasks, then run with bounded concurrency.
+  const tasks = [];
+  for (const tile of tiles) {
+    for (const q of GOOGLE_TEXT_QUERIES) tasks.push({ q, tile });
+  }
+
+  const CONCURRENCY = parseInt(process.env.GOOGLE_CONCURRENCY || '8', 10);
+  for (let i = 0; i < tasks.length; i += CONCURRENCY) {
+    const batch = tasks.slice(i, i + CONCURRENCY);
+    await Promise.all(batch.map(t => runTextQuery(t.q, t.tile)));
+  }
+
+  // If literally every request failed, surface the real Google error.
+  if (results.size === 0 && errors.length >= tasks.length) {
     throw new Error(`Google Places API rejected every query: ${errors[0]}`);
   }
 
+  console.log(`[google] ${results.size} unique places from ${tiles.length} tile(s) × ${GOOGLE_TEXT_QUERIES.length} queries (${queryCount} API calls)`);
   return Array.from(results.values());
 }
 

@@ -54,7 +54,10 @@ async function findJobsForCompany(company, { external = true } = {}) {
     : Promise.resolve([]);
 
   const [websiteJobs, externalJobs] = await Promise.all([websitePromise, externalPromise]);
-  return mergeJobLists(websiteJobs, externalJobs);
+  // Prefer the company's own careers page / ATS — never mix in Seek/Indeed when
+  // we already found real listings on their site.
+  if (websiteJobs.length > 0) return websiteJobs;
+  return externalJobs;
 }
 
 async function findWebsiteJobs(company) {
@@ -115,6 +118,9 @@ async function scrapeHtmlForJobs(html, baseUrl, company) {
   const jsonLdJobs = filterPlausibleJobs(extractJsonLdJobs(html, baseUrl), baseUrl);
   if (jsonLdJobs.length) return tag(jsonLdJobs, 'json-ld');
 
+  const jobAdderJobs = await fetchJobAdderFromHtml(html, baseUrl);
+  if (jobAdderJobs.length) return tag(jobAdderJobs, 'jobadder');
+
   const $ = cheerio.load(html);
   const links = [];
   $('a[href]').each((_, a) => links.push($(a).attr('href') || ''));
@@ -159,6 +165,121 @@ async function safeAts(pattern, slug) {
 
 function tag(jobs, source) {
   return jobs.map(j => ({ ...j, source }));
+}
+
+// --- JobAdder embedded widget (e.g. Compare Club) -------------------------
+// Many AU companies render careers via apps.jobadder.com — jobs only appear
+// after JavaScript runs, so static HTML scraping returns nothing.
+
+const JOBADDER_KEY_RE = /_jaJobsSettings\s*=\s*\{[^}]*\bkey\s*:\s*["']([A-Za-z0-9_]+)["']/;
+const JOBADDER_KEY_INLINE_RE = /\bkey\s*:\s*["']([A-Za-z0-9_]+)["']/;
+
+async function fetchJobAdderFromHtml(html, careersUrl) {
+  const key = await findJobAdderWidgetKey(html, careersUrl);
+  if (!key) return [];
+  return fetchJobAdderJobs(key, careersUrl);
+}
+
+async function findJobAdderWidgetKey(html, baseUrl) {
+  if (!html) return null;
+  let m = html.match(JOBADDER_KEY_RE);
+  if (m) return m[1];
+
+  const shouldScanScripts = /ja-jobs-widget|jobadder|_jaJobsSettings/i.test(html);
+  if (!shouldScanScripts) return null;
+
+  const scripts = [...html.matchAll(/(?:src|href)=["']([^"']*\/_nuxt\/[^"']+\.js)["']/gi)]
+    .map((x) => x[1]);
+  const unique = [...new Set(scripts)];
+  const prioritized = [
+    ...unique.filter((s) => /career|job|ja-jobs/i.test(s)),
+    ...unique.filter((s) => !/career|job|ja-jobs/i.test(s)),
+  ];
+  for (const src of prioritized.slice(0, 60)) {
+    const js = await fetchHtml(absolutize(src, baseUrl));
+    if (!js || !js.includes('_jaJobsSettings')) continue;
+    m = js.match(JOBADDER_KEY_RE) || js.match(JOBADDER_KEY_INLINE_RE);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function parseJobAdderJsonp(body) {
+  const raw = String(body || '').trim();
+  const m = raw.match(/^[a-zA-Z_$][\w$]*\(([\s\S]*)\)\s*;?\s*$/);
+  if (!m) return raw;
+  try { return JSON.parse(m[1]); } catch { return m[1]; }
+}
+
+async function fetchJobAdderJobs(widgetKey, careersUrl) {
+  try {
+    const resp = await axios.get('https://apps.jobadder.com/widgets/V1/Jobs/RenderJobList', {
+      timeout: TIMEOUT,
+      params: {
+        key: widgetKey,
+        jobsPerPage: 50,
+        titleIsLink: true,
+        showDatePosted: true,
+        showClassifications: true,
+        renderPoweredByJobAdder: false,
+        callback: 'cb',
+      },
+      headers: { 'User-Agent': UA, Accept: '*/*' },
+      transformResponse: [(data) => parseJobAdderJsonp(data)],
+    });
+    const html = typeof resp.data === 'string' ? resp.data : '';
+    if (!html || !/ja-job-list|class="job"/i.test(html)) return [];
+
+    const $ = cheerio.load(html);
+    const jobs = [];
+    const seen = new Set();
+    const base = (careersUrl || '').replace(/\/+$/, '');
+
+    $('.ja-job-list .job, .ja-job-list-container .job').each((_, el) => {
+      const $el = $(el);
+      const $link = $el.find('a[data-job-id], h2.title a, h2 a').first();
+      const jobId = ($link.attr('data-job-id') || '').trim();
+      const title = ($link.attr('title') || $link.text() || '').replace(/\s+/g, ' ').trim();
+      if (!title || title.length < 4) return;
+
+      const key = title.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+
+      const classes = $el.find('.classifications li, .meta li')
+        .map((__, li) => $(li).text().replace(/\s+/g, ' ').trim())
+        .get()
+        .filter(Boolean);
+      const location = classes.find((c) =>
+        /\b(sydney|melbourne|brisbane|perth|adelaide|canberra|hobart|darwin|remote|australia)\b/i.test(c) ||
+        /\b(VIC|NSW|QLD|WA|SA|TAS|ACT|NT)\b/.test(c),
+      ) || '';
+      const jobType = classes.find((c) =>
+        /permanent|contract|full.?time|part.?time|temp/i.test(c),
+      ) || '';
+      const summary = $el.find('.summary').text().replace(/\s+/g, ' ').trim();
+      const posted = $el.find('.date-posted').text().replace(/\s+/g, ' ').trim();
+
+      const url = jobId && base
+        ? `${base}${base.includes('?') ? '&' : '?'}ja-job=${jobId}`
+        : base || careersUrl;
+
+      jobs.push({
+        title,
+        url,
+        location,
+        job_type: jobType,
+        salary: '',
+        description: snippet(summary),
+        posted_at: posted ? Date.parse(posted) || null : null,
+      });
+    });
+
+    return jobs.slice(0, 25);
+  } catch (err) {
+    console.warn('[jobadder] fetch failed:', err.message);
+    return [];
+  }
 }
 
 // --- ATS adapters ---------------------------------------------------------
@@ -275,7 +396,53 @@ const ROLE_NOUN = /\b(designer|developer|engineer|manager|analyst|specialist|coo
 const HIRING_BLOCK = /(?:we'?re hiring|currently looking for|now hiring|open (?:roles?|positions?)|join (?:our|the) team|positions? available|roles? available|vacancies|think you might have|looking for a|seeking a|hiring a|roles? we(?:'re| are)|recruit for)/i;
 
 // Common non-job link text we want to throw away.
-const JUNK_TEXT = /^(careers?|jobs?|apply|apply now|open positions?|view (all )?jobs?|view (all )?roles?|see (all )?jobs?|browse (all )?(jobs|roles|positions)|all (jobs|roles|positions)|home|about|contact|english|español|français|deutsch|italiano|português|globally?|brazil|argentina|canada|chile|colombia|mexico|spain|france|germany|italy|usa|united kingdom|australia|new zealand)$/i;
+const JUNK_TEXT = /^(careers?|jobs?|apply|apply now|open positions?|career opportunit(y|ies)|job opportunit(y|ies)|(current |latest )?(open(ings?)?|opportunit(y|ies)|vacancies|vacancy|positions?|roles?)|work (with|for) us|join (our team|the team|us)|view (all )?jobs?|view (all )?roles?|see (all )?jobs?|browse (all )?(jobs|roles|positions)|all (jobs|roles|positions)|home|about|contact|english|español|français|deutsch|italiano|português|globally?|brazil|argentina|canada|chile|colombia|mexico|spain|france|germany|italy|usa|united kingdom|australia|new zealand)$/i;
+
+// Generic call-to-action link text that is NOT a real job title. Catches the
+// "Apply at Greenhouse" / "Apply on Lever" / "View on Seek" hallucination where
+// an ATS link's anchor text gets scraped as if it were a role.
+const CTA_TEXT_RE = /^(apply|view|see|open|read|learn|find out|explore|browse|check|click|go|join|start|register|sign\s*up|submit|get\s+started)\b.*\b(now|here|more|job|jobs|role|roles|position|positions|posting|application|greenhouse|lever|workable|ashby|seek|indeed|linkedin|breezy|smartrecruiters|workday|us|team|details?)\b|^(apply|view|see|open|read more|learn more|find out more|view details?|view job|view role|view posting|apply now|apply here|join (us|our team))$/i;
+
+function isCtaLinkText(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!t) return true;
+  if (CTA_TEXT_RE.test(t)) return true;
+  // "Apply at <Company/ATS>", "Apply on <ATS>", "Apply via <ATS>"
+  if (/^apply\s+(at|on|via|with|through|using)\b/i.test(t)) return true;
+  return false;
+}
+
+// Broad, multi-industry role vocabulary so the positive title gate works for
+// tech, trades, hospitality, healthcare, retail, finance, etc. — not just dev.
+const ROLE_NOUN_ANY = /\b(developer|engineer|designer|manager|lead|architect|analyst|scientist|consultant|specialist|director|intern|coordinator|producer|writer|editor|recruiter|strategist|associate|assistant|advis[eo]r|operator|administrator|officer|technician|marketer|copywriter|illustrator|animator|artist|programmer|founder|head|chief|president|supervisor|agent|representative|rep|executive|clerk|cashier|barista|bartender|chef|cook|waiter|waitress|server|baker|cleaner|driver|courier|rider|nurse|doctor|physician|therapist|teacher|tutor|trainer|instructor|lecturer|electrician|plumber|carpenter|mechanic|technologist|accountant|bookkeeper|paralegal|solicitor|lawyer|attorney|receptionist|secretary|stylist|barber|labourer|laborer|welder|fitter|installer|estimator|surveyor|planner|buyer|merchandiser|controller|auditor|teller|underwriter|broker|trader|pharmacist|dentist|hygienist|physiotherapist|optometrist|radiographer|paramedic|carer|caregiver|gardener|landscaper|painter|roofer|plasterer|tiler|machinist|foreman|apprentice|graduate|trainee|partner|principal|nanny|housekeeper|concierge|guard|dispatcher|picker|packer|forklift|storeperson|warehouse|sales|support|engineering|developer|qa|devops|sre|ux|ui|hr|finance|legal|operations|logistics|procurement|customer success)\b/i;
+
+const SENTENCE_STOPWORDS = /\b(we|our|us|you|your|let'?s|come|why|how|what|discover|explore|learn|please|click|here|today|now|the best|world['’]s|leading|trusted|award|passionate about)\b/i;
+
+// Positive gate: does this anchor/heading text actually look like a job title?
+// Conservative — when unsure we drop it (zero fake jobs beats one hallucination).
+function looksLikeJobTitle(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!t || t.length < 3 || t.length > 90) return false;
+  if (JUNK_TEXT.test(t)) return false;
+  if (isCtaLinkText(t)) return false;
+  if (/[.?!]$/.test(t)) return false;          // sentences / questions
+  if (/^\d/.test(t)) return false;             // dates / numbers
+  const words = t.split(/\s+/);
+  if (words.length > 9) return false;          // marketing copy, not a title
+
+  // Strong, unambiguous signal: a recognised role noun.
+  if (ROLE_NOUN_ANY.test(t)) {
+    // ...unless it's clearly a conversational sentence wrapped around one.
+    if (SENTENCE_STOPWORDS.test(t) && words.length > 5) return false;
+    return true;
+  }
+
+  // No role noun: only accept a tidy Title-Cased phrase (e.g. "Customer Success").
+  if (SENTENCE_STOPWORDS.test(t)) return false;
+  if (words.length > 6) return false;
+  const capWords = words.filter(w => /^[A-Z0-9]/.test(w)).length;
+  return capWords / words.length >= 0.6;
+}
 
 function findApplyUrl($, $el, baseUrl) {
   const container = $el.closest('section, article, main, [class*="hire"], [class*="career"], [class*="job"]').first();
@@ -359,18 +526,17 @@ function scrapeCareersHtml($, baseUrl) {
     const href = ($a.attr('href') || '').trim();
     const text = ($a.text() || '').replace(/\s+/g, ' ').trim();
     if (!text || text.length < 6 || text.length > 110) return;
-    if (JUNK_TEXT.test(text)) return;
 
     const looksLikeJobUrl = /\/(jobs?|careers?|positions?|roles?|openings?|vacancies?)\/[a-z0-9][a-z0-9\-_/]+/i.test(href);
     if (!looksLikeJobUrl) return;
     // Skip locale paths like /en-au/careers/ where the slug is just a country.
     if (/\/(careers?|jobs?)\/[a-z]{2}([-_][a-z]{2})?\/?$/i.test(href)) return;
 
-    // Avoid false-positives from navigation menus ("Work with Us",
-    // "Life at Bain", "Find Your Place"). Require a recognisable role noun
-    // OR a numeric job-id segment in the URL.
-    const hasJobId = /\/(jobs?|careers?|positions?|roles?|openings?|vacancies?)\/[a-z\-]*\d{3,}/i.test(href);
-    if (!hasJobId && !JOB_TITLE_WORDS.test(text)) return;
+    // Positive gate: the link text must actually look like a role title.
+    // A job-like URL alone is not enough — anchors such as "Apply at
+    // Greenhouse" or "Career Opportunities" point at job URLs but are not
+    // titles. We'd rather show zero jobs than a fabricated one.
+    if (!looksLikeJobTitle(text)) return;
 
     const abs = absolutize(href, baseUrl) || href;
     const key = text.toLowerCase();
@@ -528,6 +694,7 @@ function isSpecificJobUrl(jobUrl, baseUrl) {
 function filterPlausibleJobs(jobs, baseUrl) {
   return (jobs || []).filter(j => {
     if (!j?.title || j.title.length < 6 || j.title.length > 120) return false;
+    if (isCtaLinkText(j.title)) return false;
     if (isFakeMarketingTitle(j.title)) return false;
     if (!isSpecificJobUrl(j.url, baseUrl)) return false;
     return true;
@@ -628,6 +795,8 @@ function currencySymbol(c) {
 }
 
 module.exports = {
+  looksLikeJobTitle,
+  isCtaLinkText,
   findJobsForCompany,
   findWebsiteJobs,
   mergeJobLists,

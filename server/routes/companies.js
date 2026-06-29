@@ -13,7 +13,7 @@ const express = require('express');
 const {
   listAllCompanies, listCompaniesInBounds, listCompaniesByPipeline, getCompany,
   setCompanyStatus, setCompanyNotes, setCompanyUserRating, setCompanyEmail,
-  listJobsForCompany, upsertJob, setJobApplied, getJob,
+  listJobsForCompany, jobsGroupedFor, upsertJob, setJobApplied, getJob,
   upsertCompany, updateEnrichment, getTeam, updateTeam,
   syncJobsForCompany,
 } = require('../db');
@@ -29,11 +29,26 @@ const {
   mergeTeamMembers,
   sanitizeTeam,
 } = require('../services/linkedinService');
+const { attachProfile, buildCompanyProfile } = require('../services/companyProfileService');
+const { enqueueDeepScan, runDeepScan, queueStats } = require('../services/deepScanQueue');
 
 const router = express.Router();
 
+function withProfile(c) {
+  if (!c) return null;
+  return attachProfile(c, listJobsForCompany(c.id));
+}
+
+// Build profiles for a whole list using a single batched jobs query, so a
+// large scan result doesn't fire thousands of synchronous DB round-trips.
+function withProfiles(companies) {
+  if (!companies.length) return [];
+  const jobsMap = jobsGroupedFor(companies.map(c => c.id));
+  return companies.map(c => attachProfile(c, jobsMap.get(c.id) || []));
+}
+
 router.get('/companies', (req, res) => {
-  const list = listAllCompanies().map(c => ({ ...c, jobs: listJobsForCompany(c.id) }));
+  const list = withProfiles(listAllCompanies());
   res.json({ count: list.length, companies: list });
 });
 
@@ -43,8 +58,7 @@ router.get('/companies/in-bounds', (req, res) => {
     return res.status(400).json({ error: 'bbox=south,west,north,east required' });
   }
   const [south, west, north, east] = bbox;
-  const list = listCompaniesInBounds({ south, west, north, east })
-    .map(c => ({ ...c, jobs: listJobsForCompany(c.id) }));
+  const list = withProfiles(listCompaniesInBounds({ south, west, north, east }));
   res.json({ count: list.length, companies: list });
 });
 
@@ -53,15 +67,37 @@ router.get('/companies/pipeline', (req, res) => {
   if (!['interested', 'applied'].includes(kind)) {
     return res.status(400).json({ error: 'kind must be interested or applied' });
   }
-  const list = listCompaniesByPipeline(kind)
-    .map(c => ({ ...c, jobs: listJobsForCompany(c.id) }));
+  const list = withProfiles(listCompaniesByPipeline(kind));
   res.json({ count: list.length, kind, companies: list });
 });
 
 router.get('/companies/:id', (req, res) => {
   const c = getCompany(req.params.id);
   if (!c) return res.status(404).json({ error: 'not found' });
-  res.json({ ...c, jobs: listJobsForCompany(c.id) });
+  res.json(withProfile(c));
+});
+
+// Unified trust-first profile (jobs, LinkedIn, links, evidence).
+router.get('/companies/:id/profile', (req, res) => {
+  const c = getCompany(req.params.id);
+  if (!c) return res.status(404).json({ error: 'not found' });
+  res.json(buildCompanyProfile(c, listJobsForCompany(c.id)));
+});
+
+// Full background deep scan: website + team + LinkedIn + jobs.
+router.post('/companies/:id/deep-scan', async (req, res) => {
+  const c = getCompany(req.params.id);
+  if (!c) return res.status(404).json({ error: 'not found' });
+  try {
+    await runDeepScan(c.id);
+    res.json(withProfile(getCompany(c.id)));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+router.get('/deep-scan/status', (req, res) => {
+  res.json(queueStats());
 });
 
 router.patch('/companies/:id', (req, res) => {
@@ -87,7 +123,7 @@ router.patch('/companies/:id', (req, res) => {
   }
 
   const updated = getCompany(c.id);
-  res.json({ ...updated, jobs: listJobsForCompany(c.id) });
+  res.json(withProfile(updated));
 });
 
 router.post('/companies/:id/refresh-jobs', async (req, res) => {
@@ -96,12 +132,11 @@ router.post('/companies/:id/refresh-jobs', async (req, res) => {
   try {
     const jobs = await findJobsForCompany(c, { external: true });
     syncJobsForCompany(c.id, jobs, { ok: true, replace: true });
-    const sources = [...new Set(jobs.map(j => j.source).filter(Boolean))];
     res.json({
       company_id: c.id,
       fetched: jobs.length,
-      sources,
-      jobs: listJobsForCompany(c.id),
+      sources: [...new Set(jobs.map(j => j.source).filter(Boolean))],
+      ...withProfile(getCompany(c.id)),
     });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -121,7 +156,7 @@ router.post('/companies/:id/enrich', async (req, res) => {
         fetch_error: enriched.fetch_error || 'Could not reach website',
       });
       const partial = getCompany(c.id);
-      return res.json({ ...partial, jobs: listJobsForCompany(c.id), enrich_failed: true });
+      return res.json({ ...withProfile(partial), enrich_failed: true });
     }
 
     const cls = classify({ name: c.name, type: c.type, extraText: enriched.extraText });
@@ -170,7 +205,7 @@ router.post('/companies/:id/enrich', async (req, res) => {
     }
 
     const final = getCompany(c.id);
-    res.json({ ...final, jobs: listJobsForCompany(c.id) });
+    res.json(withProfile(final));
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -243,7 +278,7 @@ router.post('/companies/:id/verify-email', async (req, res) => {
       });
     }
     const updated = getCompany(c.id);
-    res.json({ ...check, company: { ...updated, jobs: listJobsForCompany(c.id) } });
+    res.json({ ...check, company: withProfile(updated) });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

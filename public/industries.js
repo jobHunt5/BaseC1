@@ -21,7 +21,7 @@ const AreaHuntIndustries = (() => {
     { id: 'beauty', label: 'Beauty', emoji: '💇', keywords: ['beauty', 'hair', 'salon', 'nails', 'spa', 'barber', 'cosmetic'] },
     { id: 'fitness', label: 'Fitness', emoji: '💪', keywords: ['fitness', 'gym', 'personal trainer', 'yoga', 'pilates', 'sport'] },
     { id: 'security', label: 'Security', emoji: '🛡', keywords: ['security', 'guard', 'concierge', 'surveillance'] },
-    { id: 'accounting', label: 'Finance', emoji: '📊', keywords: ['account', 'accounting', 'bookkeep', 'finance', 'tax', 'audit'] },
+    { id: 'accounting', label: 'Finance', emoji: '📊', keywords: ['account', 'accounting', 'bookkeep', 'finance', 'tax', 'audit', 'insurance', 'fintech', 'comparison', 'broker', 'lending', 'bank', 'superannuation'] },
     { id: 'legal', label: 'Legal', emoji: '⚖', keywords: ['legal', 'law', 'solicitor', 'lawyer', 'paralegal', 'conveyancing'] },
     { id: 'creative', label: 'Creative', emoji: '📸', keywords: ['photo', 'video', 'film', 'production', 'creative', 'animation', 'media'] },
     { id: 'admin', label: 'Admin', emoji: '📋', keywords: ['admin', 'office', 'reception', 'secretary', 'virtual assistant', 'clerical'] },
