@@ -1091,6 +1091,15 @@ body.auth-locked .topbar { filter: blur(2px); pointer-events: none; user-select:
 .ob-title { font-size: 20px; font-weight: 600; margin: 0 0 6px; }
 .ob-sub { font-size: 13px; color: var(--muted); margin: 0 0 18px; line-height: 1.5; }
 
+.ob-error {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 24px 0; padding: 10px 14px;
+  background: rgba(255, 107, 107, 0.1); border: 1px solid var(--red);
+  border-radius: 8px; color: var(--red); font-size: 12.5px; font-weight: 500;
+  animation: obErrorIn 0.15s ease;
+}
+@keyframes obErrorIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
 .ob-progress-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
 .ob-progress-bar { height: 4px; background: var(--card2); border-radius: 4px; overflow: hidden; margin-bottom: 20px; }
 .ob-progress-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.25s; }

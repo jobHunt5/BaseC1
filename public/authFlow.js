@@ -26,6 +26,13 @@ const AuthGate = (() => {
     { id: 'on-site', label: 'On-site' },
   ];
 
+  // Industries where a portfolio link is a normal part of applying. Used to
+  // pick a sensible default for the "I usually need a portfolio" checkbox in
+  // Step 5 instead of defaulting it to checked for every candidate — a chef,
+  // driver, or cleaner shouldn't be blocked from finishing onboarding by a
+  // portfolio requirement that never applies to them.
+  const PORTFOLIO_RELEVANT_SECTORS = ['design', 'dev', 'ai', 'marketing', 'creative'];
+
   let session = null;
   let step = 0;
   let draft = defaultProfile();
@@ -47,7 +54,13 @@ const AuthGate = (() => {
       experienceSummary: '',
       skills: [],
       portfolioUrl: '',
-      portfolioRequired: true,
+      // null = "not yet decided" — Step 5 fills in a sensible default based
+      // on the industries picked in Step 2 the first time it's reached, but
+      // leaves it alone after that so it never overrides the candidate's own
+      // choice. It used to hard-default to true for everyone, which meant a
+      // chef or driver would hit a blocking validation error demanding a
+      // portfolio URL to finish signing up.
+      portfolioRequired: null,
       portfolioNotes: '',
       pitch: '',
       signature: '',
@@ -159,11 +172,11 @@ const AuthGate = (() => {
       : { 'Content-Type': 'application/json' };
   }
 
-  async function apiLogin(email, password, name) {
+  async function apiLogin(email, password) {
     const resp = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, name }),
+      body: JSON.stringify({ email, password }),
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(data.error || 'Login failed');
@@ -208,6 +221,23 @@ const AuthGate = (() => {
     document.body.classList.remove('auth-locked');
   }
 
+  // Inline, non-blocking validation errors — replaces native alert() popups,
+  // which interrupt the flow and look out of place next to the rest of the
+  // app's dark UI (the main app already avoids alert() in favour of toasts).
+  function showObError(msg) {
+    const el = document.getElementById('obError');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = 'flex';
+  }
+
+  function clearObError() {
+    const el = document.getElementById('obError');
+    if (!el) return;
+    el.style.display = 'none';
+    el.textContent = '';
+  }
+
   function setUserChip() {
     const chip = document.getElementById('userChip');
     const signIn = document.getElementById('signInBtn');
@@ -247,10 +277,8 @@ const AuthGate = (() => {
       <input class="form-input" id="loginEmail" type="email" placeholder="you@example.com" autocomplete="username" />
       <label class="form-label">Password</label>
       <input class="form-input" id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password" />
-      <label class="form-label">Display name <span class="label-opt">(optional on first sign-in)</span></label>
-      <input class="form-input" id="loginName" placeholder="Basil Sunny" autocomplete="name" />
       <button class="btn btn-primary auth-submit" id="loginBtn">Sign in</button>
-      <p class="auth-foot">No real accounts yet — this stores your profile locally + on this device’s server DB.</p>`;
+      <p class="auth-foot">No real accounts yet — this stores your profile locally + on this device’s server DB. We’ll ask for your name and details next.</p>`;
 
     document.getElementById('loginBtn').onclick = submitLogin;
     document.getElementById('loginPassword').addEventListener('keydown', e => {
@@ -261,12 +289,12 @@ const AuthGate = (() => {
   async function submitLogin() {
     const email = document.getElementById('loginEmail').value.trim();
     const password = document.getElementById('loginPassword').value;
-    const name = document.getElementById('loginName').value.trim();
     const btn = document.getElementById('loginBtn');
+    clearObError();
     btn.disabled = true;
     btn.textContent = 'Signing in…';
     try {
-      const data = await apiLogin(email, password, name);
+      const data = await apiLogin(email, password);
       session = {
         token: data.token,
         email: data.user.email,
@@ -276,6 +304,10 @@ const AuthGate = (() => {
       };
       saveSession();
       draft = { ...defaultProfile(), ...session.profile };
+      // Name is only ever collected in onboarding Step 1 now (never at login),
+      // so a fresh sign-in with no profile yet always lands on step 1 — no
+      // risk of `inferResumeStep` seeing a name and silently skipping the
+      // rest of that step (city/phone were being lost that way before).
       step = session.onboardingComplete && !profileNeedsOnboarding(session.profile)
         ? 0
         : inferResumeStep(draft);
@@ -287,7 +319,7 @@ const AuthGate = (() => {
         renderOnboardingStep();
       }
     } catch (err) {
-      alert(err.message);
+      showObError(err.message);
     } finally {
       btn.disabled = false;
       btn.textContent = 'Sign in';
@@ -359,6 +391,7 @@ const AuthGate = (() => {
 
   function renderOnboardingStep() {
     renderProgress();
+    clearObError();
     const body = document.getElementById('authGateBody');
     const nav = document.getElementById('authGateNav');
 
@@ -422,6 +455,9 @@ const AuthGate = (() => {
         <label class="form-label">Key skills</label>
         <input class="form-input" id="obSkills" value="${esc((draft.skills || []).join(', '))}" placeholder="UI/UX, Figma, React, brand identity…" />`;
     } else if (step === 5) {
+      if (draft.portfolioRequired === null || draft.portfolioRequired === undefined) {
+        draft.portfolioRequired = (draft.jobSectors || []).some(id => PORTFOLIO_RELEVANT_SECTORS.includes(id));
+      }
       body.innerHTML = `
         <h2 class="ob-title">Portfolio & finish</h2>
         <p class="ob-sub">Many roles need a portfolio — tell us what you have.</p>
@@ -478,50 +514,47 @@ const AuthGate = (() => {
     }
   }
 
+  // Returns an error message string if the current step is invalid, or null
+  // if it's OK to continue. Kept as pure validation (no DOM/alert side
+  // effects) so submitStep can decide how to surface it.
   function validateStep() {
     if (step === 1 && !draft.name) {
-      alert('Please enter your name');
-      return false;
+      return 'Please enter your name';
     }
     if (step === 2 && !draft.jobSectors.length) {
-      alert('Pick at least one industry');
-      return false;
+      return 'Pick at least one industry';
     }
     if (step === 2 && !draft.employmentTypes.length) {
-      alert('Pick at least one employment type');
-      return false;
+      return 'Pick at least one employment type';
     }
     if (step === 2 && !draft.workModes.length) {
-      alert('Pick at least one work mode');
-      return false;
+      return 'Pick at least one work mode';
     }
     if (step === 3) {
       const hasEdu = (draft.education || []).some(e => e.degree || e.institution || e.field);
       if (!hasEdu) {
-        alert('Add at least one education entry (degree or institution)');
-        return false;
+        return 'Add at least one education entry (degree or institution)';
       }
     }
     if (step === 4) {
       if (!draft.experienceYears) {
-        alert('Select your years of experience');
-        return false;
+        return 'Select your years of experience';
       }
       if (!draft.skills.length) {
-        alert('Add at least one key skill');
-        return false;
+        return 'Add at least one key skill';
       }
     }
     if (step === 5 && draft.portfolioRequired && !draft.portfolioUrl) {
-      alert('You marked portfolio as required — add a URL or uncheck the box');
-      return false;
+      return 'You marked portfolio as required — add a URL or uncheck the box';
     }
-    return true;
+    return null;
   }
 
   async function submitStep() {
     collectStep();
-    if (!validateStep()) return;
+    const error = validateStep();
+    if (error) { showObError(error); return; }
+    clearObError();
 
     const btn = document.getElementById('obNext');
     const wasLabel = step === 5 ? 'Finish & start hunting' : 'Continue →';
@@ -533,7 +566,7 @@ const AuthGate = (() => {
         step++;
         renderOnboardingStep();
       } catch (err) {
-        alert('Could not save progress: ' + err.message + '\n\nYour entries are kept on this device — try again.');
+        showObError('Could not save progress: ' + err.message + ' — your entries are kept on this device, try again.');
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = wasLabel; }
       }
@@ -545,7 +578,7 @@ const AuthGate = (() => {
       await persistDraft(true);
       finishBoot();
     } catch (err) {
-      alert(err.message);
+      showObError(err.message);
     } finally {
       if (btn) {
         btn.disabled = false;
