@@ -15,17 +15,22 @@
 <body>
 
 <div class="topbar">
-  <div class="logo">Area<span>Hunt</span></div>
-  <div class="search-wrap">
-    <span class="icon">🔍</span>
-    <input type="text" id="searchInput" placeholder="Search address or suburb…" />
+  <div class="topbar-brand">
+    <div class="logo"><span class="logo-mark">🎯</span>Area<span>Hunt</span></div>
   </div>
-  <button class="btn btn-draw" id="drawBtn" onclick="App.toggleDraw()">✦ Draw area</button>
-  <button class="btn btn-primary" id="scanBtn" onclick="App.scanArea()" style="display:none">⚡ Scan companies</button>
-  <button class="btn btn-outline" onclick="App.clearAll()">Clear</button>
-  <button class="btn btn-outline" id="profileBtn" onclick="App.openProfile()">👤 Profile</button>
-  <button class="btn btn-outline user-chip" id="userChip" onclick="App.openProfile()" style="display:none" title="Your profile"></button>
-  <button class="btn btn-primary" id="signInBtn" onclick="AuthGate.showLogin()" style="display:none">Sign in</button>
+
+  <div class="topbar-tools">
+    <div class="search-wrap">
+      <span class="icon">🔍</span>
+      <input type="text" id="searchInput" placeholder="Search address or suburb…" />
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-draw" id="drawBtn" onclick="App.toggleDraw()">✦ Draw area</button>
+      <button class="btn btn-primary" id="scanBtn" onclick="App.scanArea()" style="display:none">⚡ Scan companies</button>
+      <button class="btn btn-outline" onclick="App.clearAll()">Clear</button>
+    </div>
+  </div>
+
   <div class="topbar-nav" role="navigation" aria-label="Main">
     <button type="button" class="nav-link active" id="navScan" onclick="App.openScanPage()">🗺 Map scan</button>
     <button type="button" class="nav-link" id="navPipeline" onclick="App.openPipelinePage('interested')">
@@ -33,10 +38,19 @@
       <span class="nav-badge" id="navPipelineBadge">0</span>
     </button>
   </div>
-  <div class="stats-pill" id="statsPill">
-    <strong id="totalCount">0</strong> found · <strong id="appliedCount">0</strong> applied
+
+  <div class="topbar-status">
+    <div class="stats-pill" id="statsPill">
+      <strong id="totalCount">0</strong> found · <strong id="appliedCount">0</strong> applied
+    </div>
+    <div class="enrich-progress" id="enrichProgress" style="display:none"></div>
   </div>
-  <div class="enrich-progress" id="enrichProgress" style="display:none"></div>
+
+  <div class="topbar-account">
+    <button class="btn btn-outline" id="profileBtn" onclick="App.openProfile()">👤 Profile</button>
+    <button class="btn btn-outline user-chip" id="userChip" onclick="App.openProfile()" style="display:none" title="Your profile"></button>
+    <button class="btn btn-primary" id="signInBtn" onclick="AuthGate.showLogin()" style="display:none">Sign in</button>
+  </div>
 </div>
 
 <div class="coverage-banner" id="coverageBanner" style="display:none"></div>
@@ -169,14 +183,23 @@
             </select>
           </div>
         </div>
-        <div class="quick-filters" id="quickFilters">
-          <button type="button" class="quick-chip" data-qf="roles">💼 Open roles</button>
-          <button type="button" class="quick-chip" data-qf="verified">✓ Verified</button>
-          <button type="button" class="quick-chip" data-qf="email">✉ Has email</button>
-          <button type="button" class="quick-chip" data-qf="team">👥 Has team</button>
-          <button type="button" class="quick-chip" data-qf="match">🎯 Matches me</button>
+        <div class="filter-group">
+          <span class="filter-group-label">Status</span>
+          <div class="quick-filters" id="quickFilters">
+            <button type="button" class="quick-chip" data-qf="roles">💼 Open roles</button>
+            <button type="button" class="quick-chip" data-qf="verified">✓ Verified</button>
+            <button type="button" class="quick-chip" data-qf="email">✉ Has email</button>
+            <button type="button" class="quick-chip" data-qf="team">👥 Has team</button>
+            <button type="button" class="quick-chip" data-qf="match">🎯 Matches me</button>
+          </div>
         </div>
-        <div class="filters" id="industryFilters"></div>
+        <div class="filter-group">
+          <span class="filter-group-label">Industry</span>
+          <div class="filters-scroll">
+            <div class="filters" id="industryFilters"></div>
+            <div class="filters-fade"></div>
+          </div>
+        </div>
       </div>
       <div class="company-list" id="companyList">
         <div class="empty-state">

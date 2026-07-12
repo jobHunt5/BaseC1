@@ -44,7 +44,33 @@ const App = (() => {
 
   let appStarted = false;
 
+  // The detail panel/backdrop sit below the topbar + coverage banner, whose
+  // combined height isn't fixed — the topbar wraps to a second row on
+  // narrower screens and the banner only appears sometimes (e.g. the
+  // Google-Places-quota-exhausted fallback warning). A hardcoded top offset
+  // drifts out of sync with either of those and the panel ends up
+  // overlapping the banner text. Track the real height with a
+  // ResizeObserver instead and expose it as a CSS variable.
+  function syncHeaderHeight() {
+    const topbar = document.querySelector('.topbar');
+    const banner = document.getElementById('coverageBanner');
+    const set = () => {
+      const bannerH = banner && banner.style.display !== 'none' ? banner.offsetHeight : 0;
+      const h = (topbar?.offsetHeight || 0) + bannerH;
+      document.documentElement.style.setProperty('--header-h', `${h}px`);
+    };
+    set();
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(set);
+      if (topbar) ro.observe(topbar);
+      if (banner) ro.observe(banner);
+    } else {
+      window.addEventListener('resize', set);
+    }
+  }
+
   function init() {
+    syncHeaderHeight();
     AuthGate.boot((sess) => {
       applyUserProfile(sess.profile);
       if (!appStarted) {
@@ -664,7 +690,7 @@ const App = (() => {
       if (!ok) return;
     }
     const btn = document.getElementById('scanBtn');
-    btn.textContent = '⏳ Scanning…';
+    btn.innerHTML = '<span class="inline-spinner" style="border-top-color:#fff;border-color:rgba(255,255,255,0.35)"></span>Scanning…';
     btn.disabled = true;
 
     const bar = document.createElement('div');
@@ -755,7 +781,7 @@ const App = (() => {
   function renderAreaJobsBanner() {
     if (state.view !== 'scan') return '';
     if (state.areaJobsLoading) {
-      return `<div class="area-jobs-banner loading">⏳ Searching Seek, Indeed, LinkedIn &amp; Jora for more roles in this area…</div>`;
+      return `<div class="area-jobs-banner loading"><span class="inline-spinner"></span>Searching Seek, Indeed, LinkedIn &amp; Jora for more roles in this area…</div>`;
     }
     if (!state.areaJobs.length) return '';
     const labels = { seek: 'Seek', indeed: 'Indeed', 'linkedin-jobs': 'LinkedIn', jora: 'Jora' };
@@ -1033,7 +1059,7 @@ const App = (() => {
 
   async function loadPipelineList(kind) {
     const listEl = document.getElementById('pipelineList');
-    listEl.innerHTML = '<div class="empty-state"><div class="big-icon">⏳</div><p>Loading…</p></div>';
+    listEl.innerHTML = '<div class="empty-state"><span class="inline-spinner big-spinner"></span><p>Loading…</p></div>';
     try {
       const data = await fetch(`/api/companies/pipeline?kind=${encodeURIComponent(kind)}`).then(r => r.json());
       state.pipelineCompanies = data.companies || [];
@@ -1183,10 +1209,18 @@ const App = (() => {
       ).join('')}${extra ? `<span class="team-mini-more">+${extra} more</span>` : ''}</div>`;
     })() : '';
 
-    // Show spinner only while this card is actively being fetched.
+    // Show a spinner while this card is actively being fetched, or — once
+    // enrichment has actually finished and genuinely turned up nothing — a
+    // quiet note instead of just silently having a shorter card than its
+    // neighbours with no explanation for why.
     const sid = String(c.id);
-    const enrichingHint = _enriching.has(sid)
-      ? `<div class="card-enriching">⏳ ${c.enrich_depth === 'full' ? 'deep scanning…' : 'fetching contact info…'}</div>` : '';
+    const hasAnyExtra = !!(chipsHTML || descHTML || teamPreview || oppsHTML);
+    let enrichingHint = '';
+    if (_enriching.has(sid)) {
+      enrichingHint = `<div class="card-enriching"><span class="card-spinner"></span>${c.enrich_depth === 'full' ? 'Deep scanning…' : 'Fetching contact info…'}</div>`;
+    } else if (c.enriched_at && !hasAnyExtra) {
+      enrichingHint = `<div class="card-enriching muted">No public contact info or jobs found on their website</div>`;
+    }
 
     const cid = escapeAttr(c.id);
     const logo = faviconHtml(c, 36);
@@ -1419,13 +1453,13 @@ const App = (() => {
       if (_enriching.has(String(c.id)) && c.enrich_depth !== 'full') {
         return `<div class="detail-section">
           <div class="detail-label">People at ${escapeHtml(c.name)}</div>
-          <div class="empty-hint">⏳ Deep-scanning website &amp; LinkedIn for team members…</div>
+          <div class="empty-hint"><span class="inline-spinner"></span>Deep-scanning website &amp; LinkedIn for team members…</div>
         </div>`;
       }
       if (!c.enriched_at) {
         return `<div class="detail-section">
           <div class="detail-label">People at ${escapeHtml(c.name)}</div>
-          <div class="empty-hint">⏳ Scanning website &amp; LinkedIn for team members…</div>
+          <div class="empty-hint"><span class="inline-spinner"></span>Scanning website &amp; LinkedIn for team members…</div>
         </div>`;
       }
       return `<div class="detail-section">
@@ -1464,7 +1498,7 @@ const App = (() => {
             ? (state.hasSerperKey
               ? 'No roles on their website yet. Scan jobs checks careers page first, then Seek/Indeed only as fallback.'
               : 'No careers page found. Add SERPER_API_KEY in .env for job-board fallback search.')
-            : '⏳ Scanning careers page, ATS boards, and company website…'}</div>`;
+            : '<span class="inline-spinner"></span>Scanning careers page, ATS boards, and company website…'}</div>`;
     return `
       <div class="detail-section jobs-section">
         <div class="detail-label">
@@ -1843,7 +1877,7 @@ const App = (() => {
 
   async function verifyCompanyEmail(id) {
     const btn = document.getElementById('verifyEmailBtn-' + id);
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Verifying…'; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="inline-spinner"></span>Verifying…'; }
     try {
       const resp = await fetch(`/api/companies/${encodeURIComponent(id)}/verify-email`, { method: 'POST' });
       const data = await resp.json();
@@ -1870,7 +1904,7 @@ const App = (() => {
 
   async function generateOutreachEmails(id) {
     const btn = document.getElementById('genEmailBtn-' + id);
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="inline-spinner"></span>Generating…'; }
     try {
       const resp = await fetch(`/api/companies/${encodeURIComponent(id)}/generate-emails`, {
         method: 'POST',
@@ -1937,7 +1971,7 @@ const App = (() => {
     if (!window.confirm(`Send email to ${c.email}?\n\nSubject: ${subject}`)) return;
 
     const btn = document.getElementById('sendEmailBtn-' + id);
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Sending…'; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="inline-spinner"></span>Sending…'; }
     try {
       const resp = await fetch(`/api/companies/${encodeURIComponent(id)}/send-email`, {
         method: 'POST',
@@ -1999,7 +2033,7 @@ const App = (() => {
     if (c.enriched_at) {
       stats.push(`<span title="${new Date(c.enriched_at).toLocaleString()}">🕒 Enriched ${timeAgo(c.enriched_at)}</span>`);
     } else if (c.website) {
-      stats.push(`<span style="color:var(--accent2)">⏳ Fetching website &amp; jobs… (≈10s)</span>`);
+      stats.push(`<span style="color:var(--accent2);display:inline-flex;align-items:center"><span class="inline-spinner"></span>Fetching website &amp; jobs… (≈10s)</span>`);
     }
     const totalJobs   = (c.jobs || []).length;
     const appliedJobs = (c.jobs || []).filter(j => j.applied).length;
