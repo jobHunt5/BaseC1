@@ -634,8 +634,9 @@ body.view-pipeline .detail-panel {
 .prof-edu-row .form-input { margin-bottom: 6px; }
 .form-label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 12px; margin-bottom: 6px; }
 .form-label:first-of-type { margin-top: 0; }
-.form-input { width: 100%; background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 8px; font-size: 13px; font-family: inherit; outline: none; transition: border-color 0.15s; }
-.form-input:focus { border-color: var(--accent); }
+.form-input { width: 100%; background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 8px; font-size: 13px; font-family: inherit; outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
+.form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(108, 99, 255, 0.18); }
+.form-input::placeholder { color: #5c5c78; }
 textarea.form-input { resize: vertical; min-height: 60px; line-height: 1.5; }
 
 .apply-big { width: 100%; padding: 10px; background: var(--accent); color: #fff; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; margin-top: 4px; }
@@ -1054,78 +1055,162 @@ body.auth-locked .topbar { filter: blur(2px); pointer-events: none; user-select:
   background: rgba(8, 10, 18, 0.88);
   backdrop-filter: blur(8px);
   padding: 20px;
+  animation: authScrimIn 0.2s ease;
 }
 .auth-gate.show { display: flex; }
+@keyframes authScrimIn { from { opacity: 0; } to { opacity: 1; } }
 
 .auth-card {
-  width: 520px; max-width: 96vw; max-height: 92vh;
-  background: var(--surface);
+  width: 560px; max-width: 96vw; max-height: 92vh;
+  background:
+    radial-gradient(680px 280px at 15% -10%, rgba(108, 99, 255, 0.16), transparent 60%),
+    radial-gradient(500px 220px at 110% 10%, rgba(78, 205, 196, 0.10), transparent 55%),
+    var(--surface);
   border: 1px solid var(--border);
-  border-radius: 16px;
-  box-shadow: var(--shadow);
+  border-radius: 20px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), 0 2px 0 rgba(255, 255, 255, 0.03) inset;
   display: flex; flex-direction: column;
   overflow: hidden;
+  position: relative;
+  animation: authCardIn 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
+.auth-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+}
+@keyframes authCardIn { from { opacity: 0; transform: translateY(14px) scale(0.98); } to { opacity: 1; transform: none; } }
 
-.auth-gate-body { padding: 24px; overflow-y: auto; flex: 1; }
+.auth-gate-body { padding: 8px 32px 28px; overflow-y: auto; flex: 1; }
 .auth-gate-nav {
-  padding: 14px 24px 20px;
+  padding: 16px 32px 24px;
   border-top: 1px solid var(--border);
-  display: flex; justify-content: space-between; gap: 12px;
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
 }
+.auth-gate-nav .btn-primary { padding: 11px 22px; box-shadow: 0 6px 20px rgba(108, 99, 255, 0.35); }
+.auth-gate-nav .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(108, 99, 255, 0.45); }
+.auth-gate-nav .btn-primary:active { transform: translateY(0); }
+.auth-gate-nav .btn-outline:hover { transform: translateY(-1px); }
 
-.auth-brand { text-align: center; margin-bottom: 20px; }
-.auth-logo { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+.auth-brand { text-align: center; padding: 30px 32px 8px; }
+.auth-brand-mark {
+  width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center; font-size: 24px;
+  background: linear-gradient(135deg, var(--accent), #8f7dff);
+  box-shadow: 0 8px 24px rgba(108, 99, 255, 0.4);
+}
+.auth-logo { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
 .auth-logo span { color: var(--accent); }
 .auth-brand p { font-size: 13px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
 
 .auth-demo-note {
-  font-size: 11px; color: var(--accent2);
-  background: rgba(108, 99, 255, 0.1);
-  border: 1px solid rgba(108, 99, 255, 0.25);
-  border-radius: 8px; padding: 8px 12px; margin-bottom: 16px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11.5px; color: var(--accent2);
+  background: rgba(78, 205, 196, 0.08);
+  border: 1px solid rgba(78, 205, 196, 0.22);
+  border-radius: 10px; padding: 9px 13px; margin-bottom: 18px;
 }
-.auth-submit { width: 100%; margin-top: 16px; padding: 12px; font-size: 14px; }
-.auth-foot { font-size: 11px; color: var(--muted); text-align: center; margin-top: 14px; line-height: 1.45; }
+.auth-submit { width: 100%; margin-top: 18px; padding: 13px; font-size: 14px; box-shadow: 0 6px 20px rgba(108, 99, 255, 0.35); }
+.auth-submit:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(108, 99, 255, 0.45); }
+.auth-foot { font-size: 11.5px; color: var(--muted); text-align: center; margin-top: 16px; line-height: 1.5; }
 
-.ob-title { font-size: 20px; font-weight: 600; margin: 0 0 6px; }
-.ob-sub { font-size: 13px; color: var(--muted); margin: 0 0 18px; line-height: 1.5; }
+/* Per-step header: small icon badge + "STEP X OF 5" eyebrow, so every step
+   carries its own visual identity instead of being an undifferentiated form. */
+.ob-step-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.ob-step-icon {
+  width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; font-size: 16px;
+  background: rgba(108, 99, 255, 0.14); border: 1px solid rgba(108, 99, 255, 0.3);
+}
+.ob-step-eyebrow { font-size: 11px; font-weight: 700; color: var(--accent2); text-transform: uppercase; letter-spacing: 0.8px; }
+
+.ob-title { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 6px; }
+.ob-sub { font-size: 13.5px; color: var(--muted); margin: 0 0 22px; line-height: 1.55; }
 
 .ob-error {
   display: flex; align-items: center; gap: 8px;
-  margin: 0 24px 0; padding: 10px 14px;
+  margin: 0 32px 14px; padding: 10px 14px;
   background: rgba(255, 107, 107, 0.1); border: 1px solid var(--red);
-  border-radius: 8px; color: var(--red); font-size: 12.5px; font-weight: 500;
-  animation: obErrorIn 0.15s ease;
+  border-radius: 10px; color: var(--red); font-size: 12.5px; font-weight: 500;
+  animation: obErrorIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes obErrorIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
-.ob-progress-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
-.ob-progress-bar { height: 4px; background: var(--card2); border-radius: 4px; overflow: hidden; margin-bottom: 20px; }
-.ob-progress-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.25s; }
+/* Stepper: numbered nodes connected by fill lines, replacing a single flat
+   progress bar so completed / current / upcoming steps are unmistakable at
+   a glance (and completed steps get a satisfying checkmark). */
+.ob-stepper { display: flex; align-items: center; padding: 22px 32px 4px; }
+.ob-step-node {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: var(--muted);
+  background: var(--card); border: 2px solid var(--border);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ob-step-node.active {
+  color: #fff; border-color: var(--accent); background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(108, 99, 255, 0.2);
+}
+.ob-step-node.done { color: #fff; border-color: var(--accent2); background: var(--accent2); }
+.ob-step-line { flex: 1; height: 2px; background: var(--border); margin: 0 4px; border-radius: 2px; transition: background 0.3s; }
+.ob-step-line.done { background: var(--accent2); }
 
-.chip-group { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-.chip-group.sectors { max-height: 220px; overflow-y: auto; padding-right: 4px; margin-bottom: 8px; }
-.chip-group.sectors .chip-opt { flex: 1 1 calc(50% - 8px); min-width: 140px; font-size: 12px; }
-.ob-hint { font-size: 11px; color: var(--muted); margin: -8px 0 14px; line-height: 1.4; }
+.chip-group { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 18px; }
+.chip-group.sectors { max-height: 220px; overflow-y: auto; padding-right: 4px; margin-bottom: 10px; }
+.chip-group.sectors .chip-opt { flex: 1 1 calc(50% - 9px); min-width: 140px; font-size: 12px; }
+.ob-hint { font-size: 11.5px; color: var(--muted); margin: -10px 0 16px; line-height: 1.4; }
 .chip-opt {
+  position: relative;
   display: flex; flex-direction: column; align-items: flex-start;
-  padding: 10px 14px; border-radius: 10px;
+  padding: 11px 30px 11px 15px; border-radius: 12px;
   border: 1px solid var(--border); background: var(--card);
   color: var(--text); font-size: 13px; font-weight: 500;
-  cursor: pointer; transition: all 0.15s; text-align: left;
+  cursor: pointer; transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1); text-align: left;
 }
-.chip-opt .chip-desc { font-size: 10px; color: var(--muted); font-weight: 400; margin-top: 2px; }
-.chip-opt.on { border-color: var(--accent); background: rgba(108, 99, 255, 0.15); color: var(--accent); }
+.chip-opt:hover { border-color: rgba(108, 99, 255, 0.5); transform: translateY(-1px); }
+.chip-opt .chip-desc { font-size: 10.5px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+.chip-opt.on {
+  border-color: var(--accent); background: rgba(108, 99, 255, 0.15); color: #fff;
+  box-shadow: 0 4px 14px rgba(108, 99, 255, 0.25);
+}
 .chip-opt.on .chip-desc { color: var(--accent2); }
+.chip-opt.on::after {
+  content: '✓'; position: absolute; top: 50%; right: 12px; transform: translateY(-50%);
+  width: 16px; height: 16px; border-radius: 50%; background: var(--accent);
+  color: #fff; font-size: 9px; font-weight: 900; display: flex; align-items: center; justify-content: center;
+}
 
-.edu-row { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.edu-row { margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
 .edu-row-split { display: grid; grid-template-columns: 1fr 100px; gap: 8px; margin-top: 8px; }
 .ob-add-btn { width: 100%; margin-top: 4px; }
 
 .label-opt { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); }
-.toggle-row { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; text-transform: none; font-size: 13px; font-weight: 400; color: var(--text); }
-.toggle-row input { margin-top: 3px; accent-color: var(--accent); }
+
+/* Custom checkbox: the native box looked out of place against the rest of
+   this dark, custom-styled form. */
+.toggle-row { position: relative; display: flex; align-items: flex-start; gap: 11px; cursor: pointer; text-transform: none; font-size: 13.5px; font-weight: 400; color: var(--text); padding: 2px 0; }
+.toggle-row input { position: absolute; top: 2px; left: 0; opacity: 0; width: 20px; height: 20px; margin: 0; cursor: pointer; }
+.toggle-row .toggle-box {
+  width: 20px; height: 20px; border-radius: 6px; flex-shrink: 0; margin-top: 1px;
+  border: 1.5px solid var(--border); background: var(--card);
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.toggle-row .toggle-box svg { opacity: 0; transform: scale(0.5); transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1); }
+.toggle-row input:checked ~ .toggle-box { background: var(--accent); border-color: var(--accent); }
+.toggle-row input:checked ~ .toggle-box svg { opacity: 1; transform: scale(1); }
+.toggle-row:hover .toggle-box { border-color: var(--accent); }
+
+/* Smooth cross-fade between onboarding steps instead of an instant swap. */
+.ob-anim { animation: obStepIn 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+@keyframes obStepIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* A little more breathing room inside the onboarding card specifically —
+   the same .form-label/.form-input classes are reused in the compact
+   profile-edit modal, so these tweaks are scoped rather than global. */
+.auth-gate-body .form-label { margin-top: 16px; font-size: 11.5px; }
+.auth-gate-body .form-label:first-of-type { margin-top: 0; }
+.auth-gate-body .form-input { padding: 10px 13px; font-size: 13.5px; border-radius: 10px; }
+.auth-gate-body textarea.form-input { min-height: 68px; }
 
 .user-chip {
   max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

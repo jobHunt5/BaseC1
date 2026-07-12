@@ -254,14 +254,28 @@ const AuthGate = (() => {
     chip.style.display = '';
   }
 
+  const STEP_META = {
+    1: { icon: '👤', label: 'About you' },
+    2: { icon: '💼', label: 'Work preferences' },
+    3: { icon: '📚', label: 'Education' },
+    4: { icon: '⭐', label: 'Experience' },
+    5: { icon: '📁', label: 'Portfolio' },
+  };
+
   function renderProgress() {
     const el = document.getElementById('obProgress');
     if (!el) return;
+    // No stepper on the login screen itself — it only makes sense once
+    // you're actually inside the 5-step wizard.
+    if (step < 1) { el.innerHTML = ''; return; }
     const total = 5;
-    const pct = Math.round(((step) / total) * 100);
-    el.innerHTML = `
-      <div class="ob-progress-label">Step ${Math.min(step, total)} of ${total}</div>
-      <div class="ob-progress-bar"><div class="ob-progress-fill" style="width:${pct}%"></div></div>`;
+    const nodes = [];
+    for (let i = 1; i <= total; i++) {
+      const state = i < step ? 'done' : i === step ? 'active' : '';
+      nodes.push(`<div class="ob-step-node ${state}">${i < step ? '✓' : i}</div>`);
+      if (i < total) nodes.push(`<div class="ob-step-line ${i < step ? 'done' : ''}"></div>`);
+    }
+    el.innerHTML = `<div class="ob-stepper">${nodes.join('')}</div>`;
   }
 
   function renderLogin() {
@@ -269,6 +283,7 @@ const AuthGate = (() => {
     renderProgress();
     document.getElementById('authGateBody').innerHTML = `
       <div class="auth-brand">
+        <div class="auth-brand-mark">🎯</div>
         <div class="auth-logo">Area<span>Hunt</span></div>
         <p>Sign in to save your job hunt, preferences, and applications.</p>
       </div>
@@ -389,14 +404,30 @@ const AuthGate = (() => {
       </div>`;
   }
 
+  function stepHeader() {
+    const meta = STEP_META[step] || {};
+    return `
+      <div class="ob-step-header">
+        <span class="ob-step-icon">${meta.icon || ''}</span>
+        <span class="ob-step-eyebrow">Step ${step} of 5</span>
+      </div>`;
+  }
+
   function renderOnboardingStep() {
     renderProgress();
     clearObError();
     const body = document.getElementById('authGateBody');
     const nav = document.getElementById('authGateNav');
+    // Restart the fade/slide-in animation on every step change (removing +
+    // re-adding the class doesn't replay a CSS animation on its own, so we
+    // force a reflow in between).
+    body.classList.remove('ob-anim');
+    void body.offsetWidth;
+    body.classList.add('ob-anim');
 
     if (step === 1) {
       body.innerHTML = `
+        ${stepHeader()}
         <h2 class="ob-title">About you</h2>
         <p class="ob-sub">We’ll use this to personalise job matches and outreach.</p>
         <label class="form-label">Full name</label>
@@ -407,6 +438,7 @@ const AuthGate = (() => {
         <input class="form-input" id="obPhone" value="${esc(draft.phone)}" placeholder="+61 4xx xxx xxx" />`;
     } else if (step === 2) {
       body.innerHTML = `
+        ${stepHeader()}
         <h2 class="ob-title">What kind of work?</h2>
         <p class="ob-sub">Pick everything you’re open to — we’ll prioritise matching companies.</p>
         <label class="form-label">Industries you’re looking in</label>
@@ -422,6 +454,7 @@ const AuthGate = (() => {
     } else if (step === 3) {
       if (!draft.education.length) draft.education = [{ degree: '', field: '', institution: '', year: '' }];
       body.innerHTML = `
+        ${stepHeader()}
         <h2 class="ob-title">Education</h2>
         <p class="ob-sub">Add your highest qualification first. More entries optional.</p>
         <div id="eduList">${draft.education.map(educationRow).join('')}</div>
@@ -439,6 +472,7 @@ const AuthGate = (() => {
       });
     } else if (step === 4) {
       body.innerHTML = `
+        ${stepHeader()}
         <h2 class="ob-title">Experience & qualifications</h2>
         <p class="ob-sub">Helps us filter roles at your level and pitch you correctly.</p>
         <label class="form-label">Years of experience</label>
@@ -459,12 +493,14 @@ const AuthGate = (() => {
         draft.portfolioRequired = (draft.jobSectors || []).some(id => PORTFOLIO_RELEVANT_SECTORS.includes(id));
       }
       body.innerHTML = `
+        ${stepHeader()}
         <h2 class="ob-title">Portfolio & finish</h2>
         <p class="ob-sub">Many roles need a portfolio — tell us what you have.</p>
         <label class="form-label">Portfolio / work samples URL</label>
         <input class="form-input" id="obPortfolio" type="url" value="${esc(draft.portfolioUrl)}" placeholder="https://yourportfolio.com" />
-        <label class="form-label toggle-row">
+        <label class="toggle-row">
           <input type="checkbox" id="obPortfolioRequired" ${draft.portfolioRequired ? 'checked' : ''} />
+          <span class="toggle-box"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
           <span>I usually need a portfolio link when applying to jobs in my field</span>
         </label>
         <label class="form-label">Portfolio notes</label>
