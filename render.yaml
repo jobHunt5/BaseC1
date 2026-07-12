@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: areahunt
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PLACES_PROVIDER
+        value: google
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: SERPER_API_KEY
+        sync: false
+      - key: JOB_SEARCH_TIMEOUT_MS
+        value: 6000
+      - key: ENRICH_LIMIT
+        value: 0
+      - key: ENRICH_CONCURRENCY
+        value: 6
+      - key: DEEP_SCAN_CONCURRENCY
+        value: 4
+      - key: GOOGLE_MAX_PAGES
+        value: 3
+      - key: GOOGLE_GRID
+        value: 2
+      - key: GOOGLE_CONCURRENCY
+        value: 8
+      - key: ENRICH_TIMEOUT_MS
+        value: 8000
+      - key: FAST_ENRICH_TIMEOUT_MS
+        value: 4500
+      - key: ENRICH_USER_AGENT
+        value: "AreaHuntBot/1.0 (+live job-area scanner)"
