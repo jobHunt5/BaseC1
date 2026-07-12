@@ -18,13 +18,22 @@ const { classify, inferOpportunities } = require('./classifyService');
 
 const provider = (process.env.PLACES_PROVIDER || 'osm').toLowerCase();
 
+// Returns { places, provider, fellBack, fallbackReason }. The `provider`
+// field reflects what ACTUALLY produced the results for this call, not just
+// whether a Google key is configured — the caller previously reported
+// "google" any time a key existed, even on a scan that silently fell back
+// to OSM (e.g. once the Google Places daily quota is exhausted), so users
+// had no way to know they were looking at OSM's much sparser data.
 async function findPlacesInBounds(bounds) {
   // Google returns 10–50× more businesses than OSM. Use it whenever a key exists.
   if (process.env.GOOGLE_MAPS_API_KEY) {
     try {
-      return await findViaGoogle(bounds);
+      const places = await findViaGoogle(bounds);
+      return { places, provider: 'google', fellBack: false, fallbackReason: null };
     } catch (err) {
       console.warn('[places] Google scan failed, falling back to OSM:', err.message);
+      const places = await findViaOSM(bounds);
+      return { places, provider: 'osm', fellBack: true, fallbackReason: err.message };
     }
   }
   if (provider === 'google' && !process.env.GOOGLE_MAPS_API_KEY) {
@@ -33,7 +42,8 @@ async function findPlacesInBounds(bounds) {
       'Add a key to .env or switch PLACES_PROVIDER to "osm".'
     );
   }
-  return findViaOSM(bounds);
+  const places = await findViaOSM(bounds);
+  return { places, provider: 'osm', fellBack: false, fallbackReason: null };
 }
 
 function getProvider() {

@@ -699,6 +699,16 @@ const App = (() => {
       renderCompanies(true);
       addMarkers();
       updateStats();
+      // The backend silently falls back to OpenStreetMap when Google Places
+      // fails (e.g. daily quota exhausted) — surface that here instead of
+      // letting the results just look sparse with no explanation. The
+      // startup coverage banner only reflects whether a key is *configured*,
+      // not whether it actually worked for this specific scan.
+      const banner = document.getElementById('coverageBanner');
+      if (banner && data.fellBack) {
+        banner.style.display = '';
+        banner.innerHTML = `<strong>Google Places unavailable for this scan</strong> — fell back to OpenStreetMap (sparser coverage). ${escapeHtml(data.fallbackReason || '')}`;
+      }
       toast(`Found ${data.count} businesses — loading contact info`, 'success');
       // Kick off background enrichment for everything else.
       backgroundEnrichAll();

@@ -403,6 +403,15 @@ const JUNK_TEXT = /^(careers?|jobs?|apply|apply now|open positions?|career oppor
 // an ATS link's anchor text gets scraped as if it were a role.
 const CTA_TEXT_RE = /^(apply|view|see|open|read|learn|find out|explore|browse|check|click|go|join|start|register|sign\s*up|submit|get\s+started)\b.*\b(now|here|more|job|jobs|role|roles|position|positions|posting|application|greenhouse|lever|workable|ashby|seek|indeed|linkedin|breezy|smartrecruiters|workday|us|team|details?)\b|^(apply|view|see|open|read more|learn more|find out more|view details?|view job|view role|view posting|apply now|apply here|join (us|our team))$/i;
 
+// Careers-page "about the company" links that are easy to mistake for a job
+// title because they're short and title-cased, e.g. "Life at CommBank",
+// "Careers at ANZ", "Working at Google", "Meet the Team", "Our Culture",
+// "Why Work Here". These come up constantly on large companies' careers
+// pages (linking to a culture/benefits page, not an actual opening) and
+// nothing above catches them since they contain no role noun and pass the
+// title-case check.
+const CULTURE_PAGE_RE = /^(life at|careers? at|working at|culture at|about (us|our|the)|our story|why work|meet (the|our)|our culture|our values|our mission|our people|who we are|behind the scenes|day in the life|graduate program(me)?s?|early careers?)\b/i;
+
 function isCtaLinkText(text) {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   if (!t) return true;
@@ -414,7 +423,15 @@ function isCtaLinkText(text) {
 
 // Broad, multi-industry role vocabulary so the positive title gate works for
 // tech, trades, hospitality, healthcare, retail, finance, etc. — not just dev.
-const ROLE_NOUN_ANY = /\b(developer|engineer|designer|manager|lead|architect|analyst|scientist|consultant|specialist|director|intern|coordinator|producer|writer|editor|recruiter|strategist|associate|assistant|advis[eo]r|operator|administrator|officer|technician|marketer|copywriter|illustrator|animator|artist|programmer|founder|head|chief|president|supervisor|agent|representative|rep|executive|clerk|cashier|barista|bartender|chef|cook|waiter|waitress|server|baker|cleaner|driver|courier|rider|nurse|doctor|physician|therapist|teacher|tutor|trainer|instructor|lecturer|electrician|plumber|carpenter|mechanic|technologist|accountant|bookkeeper|paralegal|solicitor|lawyer|attorney|receptionist|secretary|stylist|barber|labourer|laborer|welder|fitter|installer|estimator|surveyor|planner|buyer|merchandiser|controller|auditor|teller|underwriter|broker|trader|pharmacist|dentist|hygienist|physiotherapist|optometrist|radiographer|paramedic|carer|caregiver|gardener|landscaper|painter|roofer|plasterer|tiler|machinist|foreman|apprentice|graduate|trainee|partner|principal|nanny|housekeeper|concierge|guard|dispatcher|picker|packer|forklift|storeperson|warehouse|sales|support|engineering|developer|qa|devops|sre|ux|ui|hr|finance|legal|operations|logistics|procurement|customer success)\b/i;
+// Deliberately excludes bare department/domain nouns like "sales", "support",
+// "engineering", "finance", "legal", "operations", "hr" — verified live
+// against Commonwealth Bank and ANZ's real careers pages, where division
+// landing pages ("Engineering", "Support Hub", "Guidance & Support
+// Services") matched these just as easily as an actual job title did. A
+// real compound title using one of those words (e.g. "Support Engineer",
+// "Sales Manager", "Legal Counsel") still matches via the specific role
+// noun paired with it.
+const ROLE_NOUN_ANY = /\b(developer|engineer|designer|manager|lead|architect|analyst|scientist|consultant|specialist|director|intern|coordinator|producer|writer|editor|recruiter|strategist|associate|assistant|advis[eo]r|operator|administrator|officer|technician|marketer|copywriter|illustrator|animator|artist|programmer|founder|chief|president|supervisor|agent|representative|rep|executive|clerk|cashier|barista|bartender|chef|cook|waiter|waitress|server|baker|cleaner|driver|courier|rider|nurse|doctor|physician|therapist|teacher|tutor|trainer|instructor|lecturer|electrician|plumber|carpenter|mechanic|technologist|accountant|bookkeeper|paralegal|solicitor|lawyer|attorney|counsel|receptionist|secretary|stylist|barber|labourer|laborer|welder|fitter|installer|estimator|surveyor|planner|buyer|merchandiser|controller|auditor|teller|underwriter|broker|trader|pharmacist|dentist|hygienist|physiotherapist|optometrist|radiographer|paramedic|carer|caregiver|gardener|landscaper|painter|roofer|plasterer|tiler|machinist|foreman|apprentice|graduate|trainee|partner|principal|nanny|housekeeper|concierge|guard|dispatcher|picker|packer|forklift|storeperson|sre|customer success)\b/i;
 
 const SENTENCE_STOPWORDS = /\b(we|our|us|you|your|let'?s|come|why|how|what|discover|explore|learn|please|click|here|today|now|the best|world['’]s|leading|trusted|award|passionate about)\b/i;
 
@@ -424,24 +441,27 @@ function looksLikeJobTitle(text) {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   if (!t || t.length < 3 || t.length > 90) return false;
   if (JUNK_TEXT.test(t)) return false;
+  if (CULTURE_PAGE_RE.test(t)) return false;
   if (isCtaLinkText(t)) return false;
   if (/[.?!]$/.test(t)) return false;          // sentences / questions
   if (/^\d/.test(t)) return false;             // dates / numbers
   const words = t.split(/\s+/);
   if (words.length > 9) return false;          // marketing copy, not a title
 
-  // Strong, unambiguous signal: a recognised role noun.
-  if (ROLE_NOUN_ANY.test(t)) {
-    // ...unless it's clearly a conversational sentence wrapped around one.
-    if (SENTENCE_STOPWORDS.test(t) && words.length > 5) return false;
-    return true;
-  }
-
-  // No role noun: only accept a tidy Title-Cased phrase (e.g. "Customer Success").
-  if (SENTENCE_STOPWORDS.test(t)) return false;
-  if (words.length > 6) return false;
-  const capWords = words.filter(w => /^[A-Z0-9]/.test(w)).length;
-  return capWords / words.length >= 0.6;
+  // Require a recognised role noun. This used to also accept any short,
+  // mostly-Title-Cased phrase with no role noun (e.g. to catch "Customer
+  // Success", which is already covered by ROLE_NOUN_ANY directly) — but on
+  // real corporate careers pages that fallback matched constantly: section
+  // links like "Support Hub", "Business Banking", "CommBank India", or
+  // "Belonging at ANZ" are exactly as title-cased and exactly as short as a
+  // real job title, and there were far more of them than real postings.
+  // Verified against Commonwealth Bank and ANZ's actual careers pages, which
+  // is why the role-noun list below is broad — it needs to cover retail,
+  // trades, healthcare and hospitality roles too, not just tech.
+  if (!ROLE_NOUN_ANY.test(t)) return false;
+  // ...unless it's clearly a conversational sentence wrapped around one.
+  if (SENTENCE_STOPWORDS.test(t) && words.length > 5) return false;
+  return true;
 }
 
 function findApplyUrl($, $el, baseUrl) {
@@ -531,6 +551,10 @@ function scrapeCareersHtml($, baseUrl) {
     if (!looksLikeJobUrl) return;
     // Skip locale paths like /en-au/careers/ where the slug is just a country.
     if (/\/(careers?|jobs?)\/[a-z]{2}([-_][a-z]{2})?\/?$/i.test(href)) return;
+    // Skip "about the company" content pages that happen to live under
+    // /careers/ (e.g. /careers/commbank-life.html, /careers/our-culture) —
+    // these have a job-shaped URL but are not a job.
+    if (/\/(careers?|jobs?)\/[a-z0-9-]*(life|culture|story|about|diversity|benefits|values|why-work|our-people|behind-the-scenes)[a-z0-9-]*(\.html?)?\/?$/i.test(href)) return;
 
     // Positive gate: the link text must actually look like a role title.
     // A job-like URL alone is not enough — anchors such as "Apply at
@@ -633,9 +657,12 @@ function scrapeJobCards($, baseUrl) {
     if (!inListing && !hrefLooksJob) return;
 
     const text = ($a.text() || '').replace(/\s+/g, ' ').trim();
-    if (!text || text.length < 6 || text.length > 110) return;
-    if (JUNK_TEXT.test(text)) return;
-    if (!JOB_TITLE_WORDS.test(text) && !hrefLooksJob) return;
+    // A job-shaped href used to be enough on its own even when the text had
+    // no role noun in it — that's exactly how division/culture pages like
+    // "Life at CommBank" (under /careers/) slipped through here even after
+    // scrapeCareersHtml's own text gate was tightened. Always require the
+    // link text itself to look like a real title now.
+    if (!looksLikeJobTitle(text)) return;
 
     const abs = absolutize(href, baseUrl) || href;
     if (!isSpecificJobUrl(abs, baseUrl)) return;
@@ -680,6 +707,11 @@ function isSpecificJobUrl(jobUrl, baseUrl) {
     const jobPath = job.pathname.replace(/\/+$/, '') || '/';
     if (jobPath === '/' || jobPath === basePath) return false;
 
+    // "About the company" pages that live under /careers/ (e.g.
+    // /careers/commbank-life.html) have a job-shaped path but aren't a job.
+    if (/(life|culture|story|about|diversity|benefits|values|why-work|our-people|behind-the-scenes)/i.test(jobPath)) {
+      return false;
+    }
     if (/\/(jobs?|careers?|positions?|roles?|openings?|vacancies?|apply|listing|posting)\//i.test(jobPath)) {
       return true;
     }

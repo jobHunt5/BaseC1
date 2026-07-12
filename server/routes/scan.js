@@ -12,7 +12,7 @@
 
 const express = require('express');
 
-const { findPlacesInBounds, getProvider } = require('../services/placesService');
+const { findPlacesInBounds } = require('../services/placesService');
 const { upsertCompany, listJobsForCompany, jobsGroupedFor, recordScan } = require('../db');
 const { enqueueMany } = require('../services/deepScanQueue');
 const { findAreaJobs, isAreaJobSearchEnabled } = require('../services/areaJobSearchService');
@@ -29,11 +29,10 @@ router.post('/', async (req, res) => {
   }
 
   const bounds = { south, west, north, east };
-  const provider = getProvider();
 
-  let places = [];
+  let places, provider, fellBack, fallbackReason;
   try {
-    places = await findPlacesInBounds(bounds);
+    ({ places, provider, fellBack, fallbackReason } = await findPlacesInBounds(bounds));
   } catch (err) {
     console.error('[scan] provider failed:', err.message);
     return res.status(502).json({ error: `places provider failed: ${err.message}` });
@@ -51,6 +50,8 @@ router.post('/', async (req, res) => {
   const out = places.map(p => attachProfile({ ...p, jobs: jobsMap.get(p.id) || [] }));
   res.json({
     provider,
+    fellBack,
+    fallbackReason,
     bounds,
     count: out.length,
     enriched: 0, // legacy field; frontend doesn't rely on this anymore
