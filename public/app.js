@@ -1001,7 +1001,10 @@ const App = (() => {
   }
 
   function companyRank(c) {
-    // Composite "best" score: verified > roles > match > enriched > team.
+    // Composite "best" score: verified > roles > match > enriched > team,
+    // nudged by what the learning model has picked up from your own save/
+    // apply/skip history and pulled down for companies with job postings
+    // that look fake/scammy.
     let s = 0;
     if (companyIsVerified(c)) s += 1000;
     s += Math.min(companyOpenRoles(c), 20) * 40;
@@ -1009,6 +1012,8 @@ const App = (() => {
     if (isVerifiedEmail(c)) s += 60;
     if (c.enriched_at) s += 10;
     s += Math.min((c.team || []).length, 10) * 3;
+    s += (c.profile?.learned_score || 0) * 100;
+    s -= (c.profile?.suspicious_job_count || 0) * 60;
     return s;
   }
 
@@ -1228,6 +1233,12 @@ const App = (() => {
       ? `<span class="match-pill" title="${matchCount} of your skills match likely opportunities">🎯 Match</span>` : '';
     const verifiedBadge = companyIsVerified(c)
       ? `<span class="verified-pill" title="Verified data — sourced from their own website / ATS">✓ Verified</span>` : '';
+    const learnedScore = c.profile?.learned_score || 0;
+    const learnedBadge = learnedScore > 0.3
+      ? `<span class="learned-pill" title="Based on companies you've saved/applied to before">✨ Recommended</span>` : '';
+    const suspiciousCount = c.profile?.suspicious_job_count || 0;
+    const suspiciousBadge = suspiciousCount > 0
+      ? `<span class="suspicious-pill" title="${suspiciousCount} job posting${suspiciousCount !== 1 ? 's' : ''} here has red flags — check before applying">⚠ Check listing${suspiciousCount !== 1 ? 's' : ''}</span>` : '';
 
     return `
       <div class="company-card ${isApplied ? 'applied' : ''} ${isSkipped ? 'skipped' : ''} ${!isApplied && verifiedBadge ? 'is-verified' : ''} ${String(state.selectedId) === String(c.id) ? 'selected' : ''}" data-id="${cid}">
@@ -1239,6 +1250,8 @@ const App = (() => {
               ${isApplied ? '<span class="applied-tick" title="Applied">✓</span>' : ''}
               ${verifiedBadge}
               ${matchBadge}
+              ${learnedBadge}
+              ${suspiciousBadge}
             </div>
             <div class="company-type">${escapeHtml(c.type || 'Business')}${c.address ? ' · ' + escapeHtml(suburbOf(c.address)) : ''}</div>
           </div>
@@ -1638,12 +1651,17 @@ const App = (() => {
       ? `<a href="${escapeAttr(j.url)}" target="_blank" rel="noopener">${escapeHtml(j.title)}</a>`
       : escapeHtml(j.title);
 
+    const suspiciousWarning = j.looks_suspicious
+      ? `<div class="job-suspicious-warning">⚠ This posting has red flags — ${(j.quality_flags || []).map(escapeHtml).join('; ') || 'looks unusual'}. Verify carefully before applying or sharing any details.</div>`
+      : '';
+
     return `
-      <div class="job-row ${j.applied ? 'applied' : ''}">
+      <div class="job-row ${j.applied ? 'applied' : ''} ${j.looks_suspicious ? 'is-suspicious' : ''}">
         <input type="checkbox" class="job-checkbox" ${j.applied ? 'checked' : ''} onchange="App.toggleJobApplied(${j.id}, this.checked)" />
         <div class="job-body">
           <div class="job-title">${titleHtml}</div>
           <div class="job-meta">${meta.join('')}${trust}</div>
+          ${suspiciousWarning}
           ${desc}
           ${j.url ? `<a class="job-apply-link" href="${escapeAttr(j.url)}" target="_blank" rel="noopener">Open posting →</a>` : ''}
         </div>
@@ -1684,6 +1702,52 @@ const App = (() => {
     const opps = (c.opportunities || []).filter(o => oppMatchesProfile(o, keys));
     if (opps.length === 0) return '';
     return `<div class="match-banner">🎯 <strong>Good match for your skills</strong> — likely needs ${opps.slice(0, 2).join(' / ')}.</div>`;
+  }
+
+  // AI fit score is opt-in per company (costs a real API call) rather than
+  // running automatically for everything in a scan — this renders the ask
+  // button, and checkAiFit() below swaps in the result in place.
+  function renderAiFitSection(c) {
+    return `
+      <div class="detail-section ai-fit-section" id="aiFitSection">
+        <div class="detail-label"><span>🤖 AI fit check</span></div>
+        <button class="btn btn-outline ai-fit-btn" onclick="App.checkAiFit('${escapeAttr(c.id)}')">
+          Check how well this actually fits your profile
+        </button>
+      </div>`;
+  }
+
+  async function checkAiFit(companyId) {
+    const section = document.getElementById('aiFitSection');
+    if (!section) return;
+    section.innerHTML = `
+      <div class="detail-label"><span>🤖 AI fit check</span></div>
+      <div class="empty-hint"><span class="inline-spinner"></span>Reading the role and your profile…</div>`;
+    try {
+      const resp = await fetch('/api/ai/fit-score', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: companyId }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.available) {
+        section.innerHTML = `
+          <div class="detail-label"><span>🤖 AI fit check</span></div>
+          <div class="empty-hint">${escapeHtml(data.message || data.error || 'Could not check fit right now.')}</div>`;
+        return;
+      }
+      const tier = data.score >= 70 ? 'good' : data.score >= 40 ? 'ok' : 'low';
+      section.innerHTML = `
+        <div class="detail-label"><span>🤖 AI fit check</span></div>
+        <div class="ai-fit-result ${tier}">
+          <div class="ai-fit-score">${data.score}<span>/100</span></div>
+          <div class="ai-fit-reason">${escapeHtml(data.reason)}</div>
+        </div>`;
+    } catch (err) {
+      section.innerHTML = `
+        <div class="detail-label"><span>🤖 AI fit check</span></div>
+        <div class="empty-hint">Could not reach the server — try again.</div>`;
+    }
   }
 
   function buildOutreachSubject(c) {
@@ -2146,6 +2210,7 @@ const App = (() => {
     document.getElementById('detailBody').innerHTML = `
       ${trustBanner}
       ${renderMatchBanner(c)}
+      ${state.hasOpenAiKey ? renderAiFitSection(c) : ''}
       ${descSection}
       <div class="detail-section">
         <div class="detail-label">
@@ -2714,6 +2779,7 @@ const App = (() => {
     openProfile, closeProfile, closeProfileBackdrop, saveProfile, logout,
     resolveTeamLinkedIn, discoverPeople, reVerifyCompany, toggleMapMode,
     openAccountMenu, resetListControls, loadMoreCompanies,
+    checkAiFit,
   };
 })();
 
