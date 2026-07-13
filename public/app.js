@@ -1917,11 +1917,32 @@ const App = (() => {
             ✉ Send email
           </button>
           ${verified && c.email
-            ? `<a class="btn btn-outline" href="mailto:${escapeAttr(c.email)}?subject=${encodeURIComponent(subject)}" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center">↗ Mail app</a>`
+            ? `<a class="btn btn-outline" href="mailto:${escapeAttr(c.email)}?subject=${encodeURIComponent(subject)}"
+                 style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center"
+                 onclick="App.markAppliedFromLinkClick('${cid}')">↗ Mail app &amp; mark applied</a>`
             : ''}
         </div>
         ${sendHint && !canSend ? `<div class="outreach-send-hint">${escapeHtml(sendHint)}</div>` : ''}
+        ${!hasEmail && c.careers_url ? `
+        <div class="outreach-careers-fallback">
+          No verified email — apply straight through their careers page instead:
+          <a class="btn btn-primary" href="${escapeAttr(c.careers_url)}" target="_blank" rel="noopener"
+             onclick="App.markAppliedFromLinkClick('${cid}')">↗ Open careers page &amp; mark applied</a>
+        </div>` : ''}
       </div>`;
+  }
+
+  // "Assisted apply, one click, from here only" — clicking the mailto: /
+  // careers-page link IS the apply action once you've reviewed the draft in
+  // the app, so mark it applied at the same time instead of requiring a
+  // second, separate manual toggle afterwards.
+  function markAppliedFromLinkClick(id) {
+    const c = state.companies.find(x => String(x.id) === String(id))
+      || state.pipelineCompanies.find(x => String(x.id) === String(id));
+    if (c && c.status !== 'applied') {
+      toggleStatus(id, 'applied');
+      toast('Marked as applied', 'success');
+    }
   }
 
   function getOutreachFields(id) {
@@ -2779,7 +2800,7 @@ const App = (() => {
     openProfile, closeProfile, closeProfileBackdrop, saveProfile, logout,
     resolveTeamLinkedIn, discoverPeople, reVerifyCompany, toggleMapMode,
     openAccountMenu, resetListControls, loadMoreCompanies,
-    checkAiFit,
+    checkAiFit, markAppliedFromLinkClick,
   };
 })();
 
