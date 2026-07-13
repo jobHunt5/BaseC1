@@ -81,6 +81,57 @@ db.exec(`
     created_at           INTEGER NOT NULL,
     updated_at           INTEGER NOT NULL
   );
+
+  -- Full history of save/apply/skip actions, kept even after the company's
+  -- own current .status changes again — this is what the learning-based
+  -- match scorer trains on. A single company can appear many times (saved,
+  -- then later unsaved, then applied, etc).
+  CREATE TABLE IF NOT EXISTS interactions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id  TEXT NOT NULL,
+    action      TEXT NOT NULL,  -- 'saved' | 'unsaved' | 'applied' | 'unapplied' | 'skipped' | 'unskipped'
+    created_at  INTEGER NOT NULL,
+    FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_interactions_company ON interactions(company_id);
+  CREATE INDEX IF NOT EXISTS idx_interactions_action ON interactions(action);
+
+  -- Cached "is this a genuine posting" assessment per job. Recomputing on
+  -- every list render would be wasteful (and, for the LLM-assisted checks,
+  -- slow/costly) so this is written once by jobQualityService and reused
+  -- until the job row itself changes.
+  CREATE TABLE IF NOT EXISTS job_quality (
+    job_id        INTEGER PRIMARY KEY,
+    score         REAL NOT NULL,          -- 0 (looks fake) .. 1 (looks genuine)
+    flags         TEXT NOT NULL DEFAULT '[]', -- JSON array of short reason codes
+    checked_at    INTEGER NOT NULL,
+    FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+  );
+
+  -- LLM fit-score cache, keyed by (company, job, profile snapshot) so it
+  -- only recomputes when the candidate's own profile meaningfully changes.
+  CREATE TABLE IF NOT EXISTS ai_fit_scores (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id    TEXT NOT NULL,
+    job_id        INTEGER,               -- null = company-level fit (no specific job yet)
+    profile_hash  TEXT NOT NULL,
+    score         INTEGER NOT NULL,      -- 0-100
+    reason        TEXT,
+    created_at    INTEGER NOT NULL,
+    UNIQUE(company_id, job_id, profile_hash),
+    FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_fit_company ON ai_fit_scores(company_id);
+
+  -- Learned preference weights driving the "gets smarter the more you use
+  -- it" ranking boost. One row per feature (industry:dev, employment:
+  -- full-time, has_email, verified, etc); updated after every interaction.
+  CREATE TABLE IF NOT EXISTS learned_weights (
+    feature_key   TEXT PRIMARY KEY,
+    weight        REAL NOT NULL DEFAULT 0,
+    sample_count  INTEGER NOT NULL DEFAULT 0,
+    updated_at    INTEGER NOT NULL
+  );
 `);
 
 // --- migrations ----------------------------------------------------------
@@ -242,6 +293,94 @@ function setCompanyNotes(id, notes) {
 }
 function setCompanyUserRating(id, rating) {
   setUserRatingStmt.run({ id, val: rating, now: nowMs() });
+}
+
+// --- interactions (learning signal) ---
+
+const insertInteractionStmt = db.prepare(`
+  INSERT INTO interactions (company_id, action, created_at) VALUES (@company_id, @action, @now)
+`);
+function recordInteraction(companyId, action) {
+  insertInteractionStmt.run({ company_id: companyId, action, now: nowMs() });
+}
+
+const allInteractionsStmt = db.prepare(`
+  SELECT i.company_id, i.action, i.created_at, c.cats, c.opportunities, c.type,
+         c.email IS NOT NULL AND c.email != '' AS has_email,
+         c.email_verified, c.careers_url IS NOT NULL AS has_careers_url
+  FROM interactions i
+  JOIN companies c ON c.id = i.company_id
+  ORDER BY i.created_at ASC
+`);
+function getAllInteractionsWithCompany() {
+  return allInteractionsStmt.all();
+}
+
+const interactionsForCompanyStmt = db.prepare(`
+  SELECT action, created_at FROM interactions WHERE company_id = ? ORDER BY created_at DESC
+`);
+function getInteractionsForCompany(companyId) {
+  return interactionsForCompanyStmt.all(companyId);
+}
+
+// --- job quality (fake/scam detection) ---
+
+const upsertJobQualityStmt = db.prepare(`
+  INSERT INTO job_quality (job_id, score, flags, checked_at)
+  VALUES (@job_id, @score, @flags, @now)
+  ON CONFLICT(job_id) DO UPDATE SET score = excluded.score, flags = excluded.flags, checked_at = excluded.checked_at
+`);
+function setJobQuality(jobId, score, flags = []) {
+  upsertJobQualityStmt.run({ job_id: jobId, score, flags: JSON.stringify(flags), now: nowMs() });
+}
+
+const getJobQualityStmt = db.prepare(`SELECT * FROM job_quality WHERE job_id = ?`);
+function getJobQuality(jobId) {
+  const row = getJobQualityStmt.get(jobId);
+  if (!row) return null;
+  return { score: row.score, flags: safeJSON(row.flags, []), checked_at: row.checked_at };
+}
+
+const jobQualityForCompanyStmt = db.prepare(`SELECT job_id, score, flags FROM job_quality WHERE job_id IN (SELECT id FROM jobs WHERE company_id = ?)`);
+function getJobQualityForCompany(companyId) {
+  return jobQualityForCompanyStmt.all(companyId).map(r => ({ job_id: r.job_id, score: r.score, flags: safeJSON(r.flags, []) }));
+}
+
+// --- AI fit scores (LLM cache) ---
+
+const getAiFitScoreStmt = db.prepare(`
+  SELECT score, reason, created_at FROM ai_fit_scores
+  WHERE company_id = @company_id AND (job_id IS @job_id) AND profile_hash = @profile_hash
+`);
+function getAiFitScore(companyId, jobId, profileHash) {
+  return getAiFitScoreStmt.get({ company_id: companyId, job_id: jobId ?? null, profile_hash: profileHash }) || null;
+}
+
+const setAiFitScoreStmt = db.prepare(`
+  INSERT INTO ai_fit_scores (company_id, job_id, profile_hash, score, reason, created_at)
+  VALUES (@company_id, @job_id, @profile_hash, @score, @reason, @now)
+  ON CONFLICT(company_id, job_id, profile_hash) DO UPDATE SET score = excluded.score, reason = excluded.reason, created_at = excluded.created_at
+`);
+function setAiFitScore(companyId, jobId, profileHash, score, reason) {
+  setAiFitScoreStmt.run({ company_id: companyId, job_id: jobId ?? null, profile_hash: profileHash, score, reason: reason || null, now: nowMs() });
+}
+
+// --- learned preference weights ---
+
+const allWeightsStmt = db.prepare(`SELECT * FROM learned_weights`);
+function getLearnedWeights() {
+  const out = {};
+  for (const row of allWeightsStmt.all()) out[row.feature_key] = { weight: row.weight, sample_count: row.sample_count };
+  return out;
+}
+
+const upsertWeightStmt = db.prepare(`
+  INSERT INTO learned_weights (feature_key, weight, sample_count, updated_at)
+  VALUES (@feature_key, @weight, @sample_count, @now)
+  ON CONFLICT(feature_key) DO UPDATE SET weight = excluded.weight, sample_count = excluded.sample_count, updated_at = excluded.updated_at
+`);
+function setLearnedWeight(featureKey, weight, sampleCount) {
+  upsertWeightStmt.run({ feature_key: featureKey, weight, sample_count: sampleCount, now: nowMs() });
 }
 
 const setEmailStmt = db.prepare(`
@@ -429,6 +568,21 @@ function syncJobsForCompany(companyId, jobs, { ok = true, replace = false } = {}
   for (const j of jobs) {
     upsertJob({ company_id: companyId, ...j });
   }
+  scoreJobsForCompany(companyId);
+}
+
+// Runs the (cheap, local, no network) fake/scam-signal scorer over every job
+// currently stored for a company and persists the result. Called right
+// after jobs are synced so a quality score/flags are ready by the time the
+// frontend asks for them — never on the request path itself.
+function scoreJobsForCompany(companyId) {
+  const { scoreJobQuality } = require('./services/jobQualityService');
+  const company = getCompanyStmt.get(companyId);
+  const freshJobs = listJobsForCompanyStmt.all(companyId);
+  for (const job of freshJobs) {
+    const { score, flags } = scoreJobQuality(job, company);
+    setJobQuality(job.id, score, flags);
+  }
 }
 
 // --- scans ---
@@ -588,4 +742,14 @@ module.exports = {
   upsertUser,
   getUserByEmail,
   getUserById,
+  recordInteraction,
+  getAllInteractionsWithCompany,
+  getInteractionsForCompany,
+  setJobQuality,
+  getJobQuality,
+  getJobQualityForCompany,
+  getAiFitScore,
+  setAiFitScore,
+  getLearnedWeights,
+  setLearnedWeight,
 };

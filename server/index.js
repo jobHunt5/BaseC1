@@ -6,6 +6,7 @@ const express = require('express');
 const authRoute = require('./routes/auth');
 const scanRoute = require('./routes/scan');
 const companiesRoute = require('./routes/companies');
+const aiRoute = require('./routes/ai');
 const { getProvider, getCoverageHint } = require('./services/placesService');
 const { repairOpportunityTargetClassification, repairBogusScrapedJobs, repairBogusTeamMembers } = require('./db');
 
@@ -41,6 +42,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoute);
 app.use('/api/scan', scanRoute);
 app.use('/api', companiesRoute);
+app.use('/api/ai', aiRoute);
 
 // Last-resort error handler so the front end never sees a hanging request.
 app.use((err, req, res, _next) => {

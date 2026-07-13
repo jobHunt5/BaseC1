@@ -15,7 +15,7 @@ const {
   setCompanyStatus, setCompanyNotes, setCompanyUserRating, setCompanyEmail,
   listJobsForCompany, jobsGroupedFor, upsertJob, setJobApplied, getJob,
   upsertCompany, updateEnrichment, getTeam, updateTeam,
-  syncJobsForCompany,
+  syncJobsForCompany, recordInteraction,
 } = require('../db');
 const { findJobsForCompany } = require('../services/jobsService');
 const { enrichCompany } = require('../services/enrichService');
@@ -23,6 +23,7 @@ const { verifyCompanyEmail } = require('../services/emailVerifyService');
 const { sendOutreachEmail, smtpConfigured } = require('../services/mailService');
 const { generateAiVariants } = require('../services/outreachAiService');
 const { classify, inferOpportunities } = require('../services/classifyService');
+const { retrainWeights } = require('../services/matchLearningService');
 const {
   resolveTeamLinkedIn,
   discoverCompanyPeople,
@@ -100,6 +101,21 @@ router.get('/deep-scan/status', (req, res) => {
   res.json(queueStats());
 });
 
+// Maps a status transition to a learning-signal action. Going TO a status
+// is the positive/negative signal; going back to 'none' from one is its
+// inverse (undoing a save isn't neutral — it's evidence the initial save
+// was a mistake, worth learning from too).
+function interactionForTransition(fromStatus, toStatus) {
+  if (toStatus === 'interested') return 'saved';
+  if (toStatus === 'applied') return 'applied';
+  if (toStatus === 'skipped') return 'skipped';
+  if (toStatus === 'none') {
+    if (fromStatus === 'interested') return 'unsaved';
+    if (fromStatus === 'applied') return 'unapplied';
+  }
+  return null;
+}
+
 router.patch('/companies/:id', (req, res) => {
   const c = getCompany(req.params.id);
   if (!c) return res.status(404).json({ error: 'not found' });
@@ -110,6 +126,16 @@ router.patch('/companies/:id', (req, res) => {
     const allowed = ['none', 'interested', 'applied', 'skipped'];
     if (!allowed.includes(status)) {
       return res.status(400).json({ error: `status must be one of ${allowed.join(', ')}` });
+    }
+    if (status !== c.status) {
+      const action = interactionForTransition(c.status, status);
+      if (action) {
+        recordInteraction(c.id, action);
+        // Cheap enough (hundreds of rows, not millions) to just retrain on
+        // every interaction rather than on a schedule — scores are always
+        // current with the latest save/apply/skip.
+        retrainWeights();
+      }
     }
     setCompanyStatus(c.id, status);
   }

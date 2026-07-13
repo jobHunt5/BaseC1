@@ -113,3 +113,4 @@ router.put('/profile', (req, res) => {
 });
 
 module.exports = router;
+module.exports.getUserFromRequest = getUserFromRequest;
