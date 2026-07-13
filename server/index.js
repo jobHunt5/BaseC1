@@ -7,8 +7,14 @@ const authRoute = require('./routes/auth');
 const scanRoute = require('./routes/scan');
 const companiesRoute = require('./routes/companies');
 const aiRoute = require('./routes/ai');
+const adminRoute = require('./routes/admin');
 const { getProvider, getCoverageHint } = require('./services/placesService');
+const { applyToProcessEnv } = require('./services/settingsService');
 const { repairOpportunityTargetClassification, repairBogusScrapedJobs, repairBogusTeamMembers } = require('./db');
+
+// Any settings an admin has previously changed override the .env defaults
+// from here on — before anything else touches process.env.
+applyToProcessEnv();
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -43,6 +49,7 @@ app.use('/api/auth', authRoute);
 app.use('/api/scan', scanRoute);
 app.use('/api', companiesRoute);
 app.use('/api/ai', aiRoute);
+app.use('/api/admin', adminRoute);
 
 // Last-resort error handler so the front end never sees a hanging request.
 app.use((err, req, res, _next) => {

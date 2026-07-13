@@ -132,6 +132,15 @@ db.exec(`
     sample_count  INTEGER NOT NULL DEFAULT 0,
     updated_at    INTEGER NOT NULL
   );
+
+  -- Admin-tunable scan defaults (grid size, concurrency, etc). Overrides the
+  -- .env value for that key once set, without needing a redeploy/restart —
+  -- see settingsService.js for the whitelist and how this gets applied.
+  CREATE TABLE IF NOT EXISTS settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  INTEGER NOT NULL
+  );
 `);
 
 // --- migrations ----------------------------------------------------------
@@ -383,6 +392,23 @@ function setLearnedWeight(featureKey, weight, sampleCount) {
   upsertWeightStmt.run({ feature_key: featureKey, weight, sample_count: sampleCount, now: nowMs() });
 }
 
+// --- admin-tunable settings ---
+
+const allSettingsStmt = db.prepare(`SELECT key, value FROM settings`);
+function getAllSettings() {
+  const out = {};
+  for (const row of allSettingsStmt.all()) out[row.key] = row.value;
+  return out;
+}
+
+const upsertSettingStmt = db.prepare(`
+  INSERT INTO settings (key, value, updated_at) VALUES (@key, @value, @now)
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+`);
+function setSetting(key, value) {
+  upsertSettingStmt.run({ key, value: String(value), now: nowMs() });
+}
+
 const setEmailStmt = db.prepare(`
   UPDATE companies
   SET email = @email,
@@ -595,6 +621,34 @@ function recordScan({ south, west, north, east, provider, resultCount }) {
   recordScanStmt.run(south, west, north, east, provider, resultCount, nowMs());
 }
 
+const recentScansStmt = db.prepare(`SELECT * FROM scans ORDER BY created_at DESC LIMIT 10`);
+const scanTotalsStmt = db.prepare(`SELECT COUNT(*) AS scan_count, COALESCE(SUM(result_count), 0) AS total_found FROM scans`);
+function getScanStats() {
+  return { recent: recentScansStmt.all(), totals: scanTotalsStmt.get() };
+}
+
+const statusCountsStmt = db.prepare(`SELECT status, COUNT(*) AS n FROM companies GROUP BY status`);
+function getStatusCounts() {
+  const out = { none: 0, interested: 0, applied: 0, skipped: 0 };
+  for (const row of statusCountsStmt.all()) out[row.status] = row.n;
+  return out;
+}
+
+const jobQualityStatsStmt = db.prepare(`
+  SELECT COUNT(*) AS total, AVG(score) AS avg_score, SUM(CASE WHEN score < 0.4 THEN 1 ELSE 0 END) AS suspicious_count
+  FROM job_quality
+`);
+function getJobQualityStats() {
+  const row = jobQualityStatsStmt.get();
+  return { total: row.total || 0, avg_score: row.avg_score || null, suspicious_count: row.suspicious_count || 0 };
+}
+
+const aiFitUsageStmt = db.prepare(`SELECT COUNT(*) AS total, AVG(score) AS avg_score FROM ai_fit_scores`);
+function getAiFitUsageStats() {
+  const row = aiFitUsageStmt.get();
+  return { total: row.total || 0, avg_score: row.avg_score || null };
+}
+
 // One-time repair: local businesses (restaurants, shops) were sometimes tagged
 // ai/marketing from Linktree promos in scraped page text. Re-derive sector tags
 // from name + type only.
@@ -752,4 +806,10 @@ module.exports = {
   setAiFitScore,
   getLearnedWeights,
   setLearnedWeight,
+  getAllSettings,
+  setSetting,
+  getScanStats,
+  getStatusCounts,
+  getJobQualityStats,
+  getAiFitUsageStats,
 };

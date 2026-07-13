@@ -704,5 +704,6 @@ const AuthGate = (() => {
   return {
     boot, logout, reopenOnboarding, getSession, getProfile, isLoggedIn, showLogin,
     saveProfileToServer, refreshProfile, profileNeedsOnboarding, getProfileFormOptions,
+    authHeaders,
   };
 })();

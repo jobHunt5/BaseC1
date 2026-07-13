@@ -11,8 +11,9 @@ const App = (() => {
     markers: [],
     activeCat: 'all',
     activeCats: ['all'],
-    view: 'scan',           // 'scan' | 'pipeline'
+    view: 'scan',           // 'scan' | 'pipeline' | 'admin'
     pipelineTab: 'interested',
+    adminSettings: [],
     isDrawing: false,
     drawStart: null,
     mouseDown: false,
@@ -1726,7 +1727,7 @@ const App = (() => {
     try {
       const resp = await fetch('/api/ai/fit-score', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: AuthGate.authHeaders(),
         body: JSON.stringify({ company_id: companyId }),
       });
       const data = await resp.json();
@@ -2689,10 +2690,13 @@ const App = (() => {
     state.view = view;
     document.body.classList.toggle('view-scan', view === 'scan');
     document.body.classList.toggle('view-pipeline', view === 'pipeline');
+    document.body.classList.toggle('view-admin', view === 'admin');
     document.getElementById('scanView')?.classList.toggle('hidden', view !== 'scan');
     document.getElementById('pipelinePage')?.classList.toggle('hidden', view !== 'pipeline');
+    document.getElementById('adminPage')?.classList.toggle('hidden', view !== 'admin');
     document.getElementById('navScan')?.classList.toggle('active', view === 'scan');
     document.getElementById('navPipeline')?.classList.toggle('active', view === 'pipeline');
+    document.getElementById('navAdmin')?.classList.toggle('active', view === 'admin');
     const scanOnly = view === 'scan';
     ['drawBtn', 'scanBtn', 'statsPill'].forEach(id => {
       const el = document.getElementById(id);
@@ -2707,6 +2711,10 @@ const App = (() => {
       closeDetail();
       switchPipelineTab(state.pipelineTab, { silent: true });
     }
+    if (view === 'admin' && !silent) {
+      closeDetail();
+      renderAdminPage();
+    }
   }
 
   function openScanPage() {
@@ -2719,11 +2727,176 @@ const App = (() => {
     switchPipelineTab(tab);
   }
 
+  function openAdminPage() {
+    setView('admin');
+  }
+
   function switchPipelineTab(tab, { silent = false } = {}) {
     state.pipelineTab = tab;
     document.getElementById('pipeTabSaved')?.classList.toggle('active', tab === 'interested');
     document.getElementById('pipeTabApplied')?.classList.toggle('active', tab === 'applied');
     if (!silent) loadPipelineList(tab === 'interested' ? 'interested' : 'applied');
+  }
+
+  // ---- admin view -----------------------------------------------------------
+
+  function fmtPct(x) {
+    return x == null ? '—' : Math.round(x * 100) + '%';
+  }
+
+  function fmtNum(x) {
+    return x == null ? '—' : Number(x).toLocaleString();
+  }
+
+  async function renderAdminPage() {
+    const body = document.getElementById('adminBody');
+    if (!body) return;
+    body.innerHTML = `<div class="empty-hint"><span class="inline-spinner"></span>Loading admin data…</div>`;
+    let stats, settingsData;
+    try {
+      [stats, settingsData] = await Promise.all([
+        fetch('/api/admin/stats', { headers: AuthGate.authHeaders() }).then(r => r.json()),
+        fetch('/api/admin/settings', { headers: AuthGate.authHeaders() }).then(r => r.json()),
+      ]);
+    } catch (err) {
+      body.innerHTML = `<div class="empty-hint">Could not reach the server — try again.</div>`;
+      return;
+    }
+    state.adminSettings = settingsData.settings || [];
+    body.innerHTML = renderAdminBody(stats);
+  }
+
+  function renderAdminBody(stats) {
+    const { scans, pipeline, job_quality, ai_fit, learning, config } = stats;
+    const pipelineTotal = (pipeline.none || 0) + (pipeline.interested || 0) + (pipeline.applied || 0) + (pipeline.skipped || 0);
+
+    const configRow = (label, ok) => `
+      <div class="admin-config-row">
+        <span class="admin-config-dot ${ok ? 'on' : 'off'}"></span>
+        <span>${escapeHtml(label)}</span>
+        <span class="admin-config-state">${ok ? 'Connected' : 'Not set'}</span>
+      </div>`;
+
+    const featurePill = (f, kind) => `
+      <div class="admin-feature-pill ${kind}">
+        <span class="admin-feature-name">${escapeHtml(f.feature)}</span>
+        <span class="admin-feature-meta">${f.weight > 0 ? '+' : ''}${f.weight.toFixed(2)} · ${f.sample_count}×</span>
+      </div>`;
+
+    const recentScansRows = (scans.recent || []).map(s => `
+      <tr>
+        <td>${new Date(s.created_at).toLocaleString()}</td>
+        <td>${escapeHtml(s.provider || '—')}</td>
+        <td>${fmtNum(s.result_count)}</td>
+      </tr>`).join('');
+
+    return `
+      <div class="admin-grid">
+        <div class="admin-card">
+          <div class="admin-card-title">Scanning</div>
+          <div class="admin-stat-row">
+            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(scans.totals?.scan_count)}</div><div class="admin-stat-label">Scans run</div></div>
+            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(scans.totals?.total_found)}</div><div class="admin-stat-label">Companies found</div></div>
+          </div>
+          ${recentScansRows ? `
+            <table class="admin-table">
+              <thead><tr><th>When</th><th>Provider</th><th>Found</th></tr></thead>
+              <tbody>${recentScansRows}</tbody>
+            </table>` : '<div class="empty-hint">No scans yet.</div>'}
+        </div>
+
+        <div class="admin-card">
+          <div class="admin-card-title">Pipeline funnel</div>
+          <div class="admin-funnel">
+            <div class="admin-funnel-row"><span>Found</span><span>${fmtNum(pipelineTotal)}</span></div>
+            <div class="admin-funnel-row"><span>Saved</span><span>${fmtNum(pipeline.interested)}</span></div>
+            <div class="admin-funnel-row"><span>Applied</span><span>${fmtNum(pipeline.applied)}</span></div>
+            <div class="admin-funnel-row"><span>Skipped</span><span>${fmtNum(pipeline.skipped)}</span></div>
+          </div>
+        </div>
+
+        <div class="admin-card">
+          <div class="admin-card-title">Job quality (scam detection)</div>
+          <div class="admin-stat-row">
+            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(job_quality.total)}</div><div class="admin-stat-label">Jobs scored</div></div>
+            <div class="admin-stat"><div class="admin-stat-num">${fmtPct(job_quality.avg_score)}</div><div class="admin-stat-label">Avg quality</div></div>
+            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(job_quality.suspicious_count)}</div><div class="admin-stat-label">Flagged suspicious</div></div>
+          </div>
+        </div>
+
+        <div class="admin-card">
+          <div class="admin-card-title">AI fit checks</div>
+          <div class="admin-stat-row">
+            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(ai_fit.total)}</div><div class="admin-stat-label">Checks run</div></div>
+            <div class="admin-stat"><div class="admin-stat-num">${ai_fit.avg_score != null ? Math.round(ai_fit.avg_score) : '—'}</div><div class="admin-stat-label">Avg score /100</div></div>
+          </div>
+          ${config.has_openai_key ? '' : '<div class="empty-hint">Set OPENAI_API_KEY in .env to enable AI fit checks.</div>'}
+        </div>
+
+        <div class="admin-card admin-card-wide">
+          <div class="admin-card-title">What the learning model has picked up</div>
+          <div class="admin-stat-row">
+            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(learning.confident_features)}</div><div class="admin-stat-label">Confident signals</div></div>
+            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(learning.total_features_tracked)}</div><div class="admin-stat-label">Total tracked</div></div>
+          </div>
+          <div class="admin-feature-cols">
+            <div>
+              <div class="admin-feature-col-title">You tend to like</div>
+              ${learning.top_liked?.length ? learning.top_liked.map(f => featurePill(f, 'liked')).join('') : '<div class="empty-hint">Save or apply to a few companies to start training this.</div>'}
+            </div>
+            <div>
+              <div class="admin-feature-col-title">You tend to avoid</div>
+              ${learning.top_avoided?.length ? learning.top_avoided.map(f => featurePill(f, 'avoided')).join('') : '<div class="empty-hint">Skip a few companies to start training this.</div>'}
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-card">
+          <div class="admin-card-title">Connections</div>
+          ${configRow('Google Places API', config.has_google_key)}
+          ${configRow('Serper (LinkedIn/web search)', config.has_serper_key)}
+          ${configRow('OpenAI (AI fit scoring)', config.has_openai_key)}
+          ${configRow('SMTP (direct email send)', config.has_smtp)}
+          <div class="admin-config-row"><span class="admin-config-dot on"></span><span>Places provider</span><span class="admin-config-state">${escapeHtml(config.places_provider)}</span></div>
+        </div>
+
+        <div class="admin-card admin-card-wide">
+          <div class="admin-card-title">Scan tuning</div>
+          <p class="form-hint" style="margin-bottom:14px">Changes apply immediately — no restart needed.</p>
+          ${renderAdminSettingsList()}
+        </div>
+      </div>`;
+  }
+
+  function renderAdminSettingsList() {
+    return `<div class="admin-settings-list">${(state.adminSettings || []).map(s => `
+      <div class="admin-setting-row">
+        <div class="admin-setting-info">
+          <div class="admin-setting-label">${escapeHtml(s.label)}${s.is_override ? ' <span class="admin-setting-badge">custom</span>' : ''}</div>
+          <div class="admin-setting-hint">${escapeHtml(s.hint)}</div>
+        </div>
+        <input type="number" class="form-input admin-setting-input" min="${s.min}" max="${s.max}" value="${s.value}"
+          data-key="${escapeHtml(s.key)}" onchange="App.updateAdminSetting('${escapeHtml(s.key)}', this.value)" />
+      </div>`).join('')}</div>`;
+  }
+
+  async function updateAdminSetting(key, value) {
+    try {
+      const resp = await fetch('/api/admin/settings', {
+        method: 'PUT',
+        headers: AuthGate.authHeaders(),
+        body: JSON.stringify({ key, value }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Update failed');
+      state.adminSettings = data.settings || [];
+      toast(`${key} updated`, 'success');
+      const listEl = document.querySelector('#adminBody .admin-settings-list');
+      if (listEl) listEl.outerHTML = renderAdminSettingsList();
+    } catch (err) {
+      toast(err.message || 'Could not update setting', 'error');
+      renderAdminPage();
+    }
   }
 
   function updateStats() {
@@ -2791,7 +2964,7 @@ const App = (() => {
     init,
     toggleDraw, scanArea, clearAll,
     filterCat,
-    openScanPage, openPipelinePage, switchPipelineTab,
+    openScanPage, openPipelinePage, switchPipelineTab, openAdminPage, updateAdminSetting,
     markAreaDone, saveArea,
     openDetail, closeDetail,
     toggleStatus, toggleJobApplied, setRating, saveNotes, refreshJobs,

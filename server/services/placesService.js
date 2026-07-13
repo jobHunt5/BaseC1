@@ -132,10 +132,12 @@ const GOOGLE_FIELD_MASK = [
 
 // Google Text Search (New) returns max 20 results per call but supports
 // pagination via nextPageToken (up to 3 pages = 60 results per query).
-const GOOGLE_MAX_PAGES = parseInt(process.env.GOOGLE_MAX_PAGES || '3', 10);
+// Read live (not captured at module load) so the admin settings panel can
+// change these without a server restart.
+function googleMaxPages() { return parseInt(process.env.GOOGLE_MAX_PAGES || '3', 10); }
 // Split the bbox into a grid so each cell stays under the 60-result ceiling;
 // dense CBD areas otherwise silently drop businesses past the cap.
-const GOOGLE_GRID = Math.max(1, parseInt(process.env.GOOGLE_GRID || '2', 10));
+function googleGrid() { return Math.max(1, parseInt(process.env.GOOGLE_GRID || '2', 10)); }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -179,7 +181,8 @@ async function findViaGoogle(bounds) {
       },
     };
     let pageToken = null;
-    for (let page = 0; page < GOOGLE_MAX_PAGES; page++) {
+    const maxPages = googleMaxPages();
+    for (let page = 0; page < maxPages; page++) {
       queryCount++;
       try {
         const body = { textQuery: q, locationRestriction, maxResultCount: 20 };
@@ -215,7 +218,7 @@ async function findViaGoogle(bounds) {
     }
   }
 
-  const tiles = tileBounds(bounds, GOOGLE_GRID);
+  const tiles = tileBounds(bounds, googleGrid());
   // Build all (query, tile) tasks, then run with bounded concurrency.
   const tasks = [];
   for (const tile of tiles) {

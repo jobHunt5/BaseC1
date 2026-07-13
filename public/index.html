@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-<link rel="stylesheet" href="/styles.css?v=20260629perf">
+<link rel="stylesheet" href="/styles.css?v=20260711admin">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script src="/mapTheme.js?v=20260628areas"></script>
@@ -37,6 +37,7 @@
       💼 Saved &amp; applied
       <span class="nav-badge" id="navPipelineBadge">0</span>
     </button>
+    <button type="button" class="nav-link" id="navAdmin" onclick="App.openAdminPage()">⚙ Admin</button>
   </div>
 
   <div class="topbar-status">
@@ -248,6 +249,19 @@
   </div>
 </div>
 
+<!-- Admin view — analytics + tunable scan settings -->
+<div class="admin-page hidden" id="adminPage">
+  <div class="admin-page-inner">
+    <header class="pipeline-page-header">
+      <h1>Admin</h1>
+      <p>How your scanning, matching and outreach are performing — and the knobs that control them.</p>
+    </header>
+    <div class="admin-body" id="adminBody">
+      <div class="empty-hint"><span class="inline-spinner"></span>Loading admin data…</div>
+    </div>
+  </div>
+</div>
+
 <!-- Company detail — shared by map scan + saved/applied page -->
 <div class="detail-backdrop" id="detailBackdrop" onclick="App.closeDetail()"></div>
 <div class="detail-panel" id="detailPanel">
@@ -264,7 +278,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="/industries.js?v=1"></script>
-<script src="/authFlow.js?v=20260629auth6"></script>
-<script src="/app.js?v=20260629perf"></script>
+<script src="/authFlow.js?v=20260711admin"></script>
+<script src="/app.js?v=20260711admin"></script>
 </body>
 </html>
