@@ -1,19 +1,30 @@
-// Admin view — analytics + tunable scan settings.
+// Admin API — analytics across every user, tunable scan settings, and real
+// user management (list/view/suspend/delete). Gated by adminAuth.js's
+// separate admin token, not the per-user dummy auth in auth.js.
 //
-// Single-user tool (per the actual scope of this app), so this is just a
-// second view for the one real account rather than a real permission
-// system — any signed-in session can see it, same as the rest of the app.
-//
-//   GET /api/admin/stats
-//   GET /api/admin/settings
-//   PUT /api/admin/settings   body: { key, value }
+//   GET    /api/admin/stats            -> global scan/pipeline/quality/config stats
+//   GET    /api/admin/settings         -> tunable scan defaults
+//   PUT    /api/admin/settings         body: { key, value }
+//   GET    /api/admin/users            -> every user + their pipeline counts
+//   GET    /api/admin/users/:id        -> one user's profile + learning insights
+//   PATCH  /api/admin/users/:id        body: { suspended: true|false }
+//   DELETE /api/admin/users/:id        -> removes the user and all their data
 
 const express = require('express');
-const { getScanStats, getStatusCounts, getJobQualityStats, getAiFitUsageStats } = require('../db');
+const {
+  getScanStats, getStatusCounts, getJobQualityStats, getAiFitUsageStats,
+  getAllUsersWithStats, getUserById, setUserSuspended, deleteUser,
+} = require('../db');
 const { getLearningStats } = require('../services/matchLearningService');
 const { getSettingsWithMeta, updateSetting } = require('../services/settingsService');
+const { getAdminFromRequest } = require('./adminAuth');
 
 const router = express.Router();
+
+router.use((req, res, next) => {
+  if (!getAdminFromRequest(req)) return res.status(401).json({ error: 'Not signed in as admin' });
+  next();
+});
 
 router.get('/stats', (req, res) => {
   res.json({
@@ -21,7 +32,7 @@ router.get('/stats', (req, res) => {
     pipeline: getStatusCounts(),
     job_quality: getJobQualityStats(),
     ai_fit: getAiFitUsageStats(),
-    learning: getLearningStats(),
+    user_count: getAllUsersWithStats().length,
     config: {
       places_provider: process.env.PLACES_PROVIDER || 'osm',
       has_google_key: !!process.env.GOOGLE_MAPS_API_KEY,
@@ -45,6 +56,32 @@ router.put('/settings', (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+router.get('/users', (req, res) => {
+  res.json({ users: getAllUsersWithStats() });
+});
+
+router.get('/users/:id', (req, res) => {
+  const user = getUserById(req.params.id);
+  if (!user) return res.status(404).json({ error: 'not found' });
+  res.json({ user, learning: getLearningStats(user.id) });
+});
+
+router.patch('/users/:id', (req, res) => {
+  const user = getUserById(req.params.id);
+  if (!user) return res.status(404).json({ error: 'not found' });
+  const { suspended } = req.body || {};
+  if (suspended === undefined) return res.status(400).json({ error: 'suspended required' });
+  setUserSuspended(user.id, !!suspended);
+  res.json({ user: getUserById(user.id) });
+});
+
+router.delete('/users/:id', (req, res) => {
+  const user = getUserById(req.params.id);
+  if (!user) return res.status(404).json({ error: 'not found' });
+  deleteUser(user.id);
+  res.json({ ok: true });
 });
 
 module.exports = router;

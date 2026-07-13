@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AreaHunt Admin</title>
+<link rel="stylesheet" href="/admin.css?v=1">
+</head>
+<body>
+
+<div class="admin-login-screen" id="loginScreen">
+  <div class="admin-login-card">
+    <div class="admin-login-logo"><span class="logo-mark">🎯</span>Area<span>Hunt</span> <span class="admin-badge">Admin</span></div>
+    <p class="admin-login-hint">Separate from the regular user sign-in. This controls every user's account and the shared scan settings.</p>
+    <label class="admin-form-label">Admin password</label>
+    <input type="password" id="adminPassword" class="admin-input" placeholder="••••••••" autocomplete="current-password" />
+    <div class="admin-login-error" id="loginError" style="display:none"></div>
+    <button type="button" class="admin-btn admin-btn-primary" id="loginBtn" onclick="AdminApp.login()">Sign in</button>
+  </div>
+</div>
+
+<div class="admin-shell hidden" id="adminShell">
+  <header class="admin-topbar">
+    <div class="admin-login-logo"><span class="logo-mark">🎯</span>Area<span>Hunt</span> <span class="admin-badge">Admin</span></div>
+    <nav class="admin-tabs">
+      <button type="button" class="admin-tab active" data-tab="overview" onclick="AdminApp.switchTab('overview')">Overview</button>
+      <button type="button" class="admin-tab" data-tab="users" onclick="AdminApp.switchTab('users')">Users</button>
+      <button type="button" class="admin-tab" data-tab="settings" onclick="AdminApp.switchTab('settings')">Settings</button>
+    </nav>
+    <button type="button" class="admin-btn admin-btn-outline" onclick="AdminApp.logout()">Sign out</button>
+  </header>
+
+  <main class="admin-main">
+    <section class="admin-tab-panel" id="panel-overview"></section>
+    <section class="admin-tab-panel hidden" id="panel-users"></section>
+    <section class="admin-tab-panel hidden" id="panel-settings"></section>
+  </main>
+</div>
+
+<!-- User detail drawer -->
+<div class="admin-drawer-backdrop" id="drawerBackdrop" onclick="AdminApp.closeUserDrawer(event)"></div>
+<div class="admin-drawer" id="userDrawer">
+  <div class="admin-drawer-header">
+    <div id="drawerTitle">User</div>
+    <button type="button" class="admin-drawer-close" onclick="AdminApp.closeUserDrawer()">✕</button>
+  </div>
+  <div class="admin-drawer-body" id="drawerBody"></div>
+</div>
+
+<script src="/admin.js?v=1"></script>
+</body>
+</html>

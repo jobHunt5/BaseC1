@@ -17,6 +17,7 @@ const {
   upsertCompany, updateEnrichment, getTeam, updateTeam,
   syncJobsForCompany, recordInteraction,
 } = require('../db');
+const { getUserFromRequest } = require('./auth');
 const { findJobsForCompany } = require('../services/jobsService');
 const { enrichCompany } = require('../services/enrichService');
 const { verifyCompanyEmail } = require('../services/emailVerifyService');
@@ -35,21 +36,32 @@ const { enqueueDeepScan, runDeepScan, queueStats } = require('../services/deepSc
 
 const router = express.Router();
 
-function withProfile(c) {
+// Everything here is a signed-in user's own view of the shared discovery
+// pool (status/notes/rating/applied are private per user — see db.js),
+// so the whole file requires a valid session.
+router.use((req, res, next) => {
+  const user = getUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  if (user.suspended) return res.status(403).json({ error: 'Account suspended' });
+  req.user = user;
+  next();
+});
+
+function withProfile(c, userId) {
   if (!c) return null;
-  return attachProfile(c, listJobsForCompany(c.id));
+  return attachProfile(c, listJobsForCompany(c.id, userId), userId);
 }
 
 // Build profiles for a whole list using a single batched jobs query, so a
 // large scan result doesn't fire thousands of synchronous DB round-trips.
-function withProfiles(companies) {
+function withProfiles(companies, userId) {
   if (!companies.length) return [];
-  const jobsMap = jobsGroupedFor(companies.map(c => c.id));
-  return companies.map(c => attachProfile(c, jobsMap.get(c.id) || []));
+  const jobsMap = jobsGroupedFor(companies.map(c => c.id), userId);
+  return companies.map(c => attachProfile(c, jobsMap.get(c.id) || [], userId));
 }
 
 router.get('/companies', (req, res) => {
-  const list = withProfiles(listAllCompanies());
+  const list = withProfiles(listAllCompanies(req.user.id), req.user.id);
   res.json({ count: list.length, companies: list });
 });
 
@@ -59,7 +71,7 @@ router.get('/companies/in-bounds', (req, res) => {
     return res.status(400).json({ error: 'bbox=south,west,north,east required' });
   }
   const [south, west, north, east] = bbox;
-  const list = withProfiles(listCompaniesInBounds({ south, west, north, east }));
+  const list = withProfiles(listCompaniesInBounds({ south, west, north, east }, req.user.id), req.user.id);
   res.json({ count: list.length, companies: list });
 });
 
@@ -68,30 +80,30 @@ router.get('/companies/pipeline', (req, res) => {
   if (!['interested', 'applied'].includes(kind)) {
     return res.status(400).json({ error: 'kind must be interested or applied' });
   }
-  const list = withProfiles(listCompaniesByPipeline(kind));
+  const list = withProfiles(listCompaniesByPipeline(kind, req.user.id), req.user.id);
   res.json({ count: list.length, kind, companies: list });
 });
 
 router.get('/companies/:id', (req, res) => {
-  const c = getCompany(req.params.id);
+  const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
-  res.json(withProfile(c));
+  res.json(withProfile(c, req.user.id));
 });
 
 // Unified trust-first profile (jobs, LinkedIn, links, evidence).
 router.get('/companies/:id/profile', (req, res) => {
-  const c = getCompany(req.params.id);
+  const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
-  res.json(buildCompanyProfile(c, listJobsForCompany(c.id)));
+  res.json(buildCompanyProfile(c, listJobsForCompany(c.id, req.user.id), req.user.id));
 });
 
 // Full background deep scan: website + team + LinkedIn + jobs.
 router.post('/companies/:id/deep-scan', async (req, res) => {
-  const c = getCompany(req.params.id);
+  const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
   try {
     await runDeepScan(c.id);
-    res.json(withProfile(getCompany(c.id)));
+    res.json(withProfile(getCompany(c.id, req.user.id), req.user.id));
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -117,7 +129,7 @@ function interactionForTransition(fromStatus, toStatus) {
 }
 
 router.patch('/companies/:id', (req, res) => {
-  const c = getCompany(req.params.id);
+  const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
 
   const { status, notes, user_rating } = req.body || {};
@@ -130,30 +142,30 @@ router.patch('/companies/:id', (req, res) => {
     if (status !== c.status) {
       const action = interactionForTransition(c.status, status);
       if (action) {
-        recordInteraction(c.id, action);
+        recordInteraction(req.user.id, c.id, action);
         // Cheap enough (hundreds of rows, not millions) to just retrain on
         // every interaction rather than on a schedule — scores are always
         // current with the latest save/apply/skip.
-        retrainWeights();
+        retrainWeights(req.user.id);
       }
     }
-    setCompanyStatus(c.id, status);
+    setCompanyStatus(req.user.id, c.id, status);
   }
-  if (notes !== undefined) setCompanyNotes(c.id, String(notes));
+  if (notes !== undefined) setCompanyNotes(req.user.id, c.id, String(notes));
   if (user_rating !== undefined) {
     const r = parseInt(user_rating, 10);
     if (Number.isNaN(r) || r < 0 || r > 5) {
       return res.status(400).json({ error: 'user_rating must be 0..5' });
     }
-    setCompanyUserRating(c.id, r);
+    setCompanyUserRating(req.user.id, c.id, r);
   }
 
-  const updated = getCompany(c.id);
-  res.json(withProfile(updated));
+  const updated = getCompany(c.id, req.user.id);
+  res.json(withProfile(updated, req.user.id));
 });
 
 router.post('/companies/:id/refresh-jobs', async (req, res) => {
-  const c = getCompany(req.params.id);
+  const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
   try {
     const jobs = await findJobsForCompany(c, { external: true });
@@ -162,7 +174,7 @@ router.post('/companies/:id/refresh-jobs', async (req, res) => {
       company_id: c.id,
       fetched: jobs.length,
       sources: [...new Set(jobs.map(j => j.source).filter(Boolean))],
-      ...withProfile(getCompany(c.id)),
+      ...withProfile(getCompany(c.id, req.user.id), req.user.id),
     });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -171,7 +183,7 @@ router.post('/companies/:id/refresh-jobs', async (req, res) => {
 
 // Lazy enrichment: contact scan (fast, background) or full scan (team, jobs, LinkedIn).
 router.post('/companies/:id/enrich', async (req, res) => {
-  const c = getCompany(req.params.id);
+  const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
   const depth = req.query.depth === 'full' ? 'full' : 'contact';
   try {
@@ -181,8 +193,8 @@ router.post('/companies/:id/enrich', async (req, res) => {
         fetched: false,
         fetch_error: enriched.fetch_error || 'Could not reach website',
       });
-      const partial = getCompany(c.id);
-      return res.json({ ...withProfile(partial), enrich_failed: true });
+      const partial = getCompany(c.id, req.user.id);
+      return res.json({ ...withProfile(partial, req.user.id), enrich_failed: true });
     }
 
     const cls = classify({ name: c.name, type: c.type, extraText: enriched.extraText });
@@ -220,7 +232,7 @@ router.post('/companies/:id/enrich', async (req, res) => {
 
     updateEnrichment(c.id, enriched);
 
-    const refreshed = getCompany(c.id);
+    const refreshed = getCompany(c.id, req.user.id);
     if (depth === 'full' && (refreshed.careers_url || refreshed.website)) {
       try {
         const jobs = await findJobsForCompany(refreshed, { external: true });
@@ -230,8 +242,8 @@ router.post('/companies/:id/enrich', async (req, res) => {
       }
     }
 
-    const final = getCompany(c.id);
-    res.json(withProfile(final));
+    const final = getCompany(c.id, req.user.id);
+    res.json(withProfile(final, req.user.id));
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -244,7 +256,7 @@ router.post('/companies/:id/enrich', async (req, res) => {
 //   POST /api/companies/:id/team-linkedin
 //   body (optional): { onlyTop: 5 }  // only resolve top N seniors
 router.post('/companies/:id/team-linkedin', async (req, res) => {
-  const c = getCompany(req.params.id);
+  const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
 
   let team = sanitizeTeam(getTeam(c.id) || []);
@@ -265,7 +277,7 @@ router.post('/companies/:id/team-linkedin', async (req, res) => {
 // Discover people who work at this company via LinkedIn web search.
 //   POST /api/companies/:id/discover-people
 router.post('/companies/:id/discover-people', async (req, res) => {
-  const c = getCompany(req.params.id);
+  const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
 
   const existing = sanitizeTeam(getTeam(c.id) || []);
@@ -286,7 +298,7 @@ router.post('/companies/:id/discover-people', async (req, res) => {
 
 // Re-verify contact email on website + DNS before direct send.
 router.post('/companies/:id/verify-email', async (req, res) => {
-  const c = getCompany(req.params.id);
+  const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
   try {
     const check = await verifyCompanyEmail(c);
@@ -303,8 +315,8 @@ router.post('/companies/:id/verify-email', async (req, res) => {
         email_verified: false,
       });
     }
-    const updated = getCompany(c.id);
-    res.json({ ...check, company: withProfile(updated) });
+    const updated = getCompany(c.id, req.user.id);
+    res.json({ ...check, company: withProfile(updated, req.user.id) });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -312,7 +324,7 @@ router.post('/companies/:id/verify-email', async (req, res) => {
 
 // Generate multiple creative outreach drafts (AI if OPENAI_API_KEY set, else templates).
 router.post('/companies/:id/generate-emails', async (req, res) => {
-  const c = getCompany(req.params.id);
+  const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
   const profile = req.body?.profile || {};
   try {
@@ -327,7 +339,7 @@ router.post('/companies/:id/generate-emails', async (req, res) => {
 
 // Send outreach directly — only to verified company emails.
 router.post('/companies/:id/send-email', async (req, res) => {
-  const c = getCompany(req.params.id);
+  const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
 
   if (!c.email_verified || !c.email) {
@@ -368,13 +380,13 @@ router.post('/companies/:id/send-email', async (req, res) => {
 router.patch('/jobs/:id', (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (Number.isNaN(id)) return res.status(400).json({ error: 'bad id' });
-  const job = getJob(id);
+  const job = getJob(id, req.user.id);
   if (!job) return res.status(404).json({ error: 'not found' });
 
   const { applied } = req.body || {};
-  if (applied !== undefined) setJobApplied(id, !!applied);
+  if (applied !== undefined) setJobApplied(req.user.id, id, !!applied);
 
-  res.json(getJob(id));
+  res.json(getJob(id, req.user.id));
 });
 
 module.exports = router;

@@ -13,11 +13,20 @@
 const express = require('express');
 
 const { findPlacesInBounds } = require('../services/placesService');
-const { upsertCompany, listJobsForCompany, jobsGroupedFor, recordScan } = require('../db');
+const { upsertCompany, listJobsForCompany, listCompaniesInBounds, jobsGroupedFor, recordScan } = require('../db');
+const { getUserFromRequest } = require('./auth');
 const { enqueueMany } = require('../services/deepScanQueue');
 const { findAreaJobs, isAreaJobSearchEnabled } = require('../services/areaJobSearchService');
 
 const router = express.Router();
+
+router.use((req, res, next) => {
+  const user = getUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  if (user.suspended) return res.status(403).json({ error: 'Account suspended' });
+  req.user = user;
+  next();
+});
 
 router.post('/', async (req, res) => {
   const { south, west, north, east } = req.body || {};
@@ -39,15 +48,18 @@ router.post('/', async (req, res) => {
   }
 
   for (const p of places) upsertCompany(p);
-  recordScan({ ...bounds, provider, resultCount: places.length });
+  recordScan({ ...bounds, provider, resultCount: places.length }, req.user.id);
 
   // Queue background deep scans (website, jobs, LinkedIn) for companies with websites.
   const withSites = places.filter(p => p.website).map(p => p.id);
   if (withSites.length) enqueueMany(withSites.slice(0, 80));
 
   const { attachProfile } = require('../services/companyProfileService');
-  const jobsMap = jobsGroupedFor(places.map(p => p.id));
-  const out = places.map(p => attachProfile({ ...p, jobs: jobsMap.get(p.id) || [] }));
+  // Re-fetch hydrated (companies already upserted above) so each result
+  // carries this user's own status/notes/rating, not the raw provider row.
+  const hydratedById = new Map(listCompaniesInBounds(bounds, req.user.id).map(c => [c.id, c]));
+  const jobsMap = jobsGroupedFor(places.map(p => p.id), req.user.id);
+  const out = places.map(p => attachProfile(hydratedById.get(p.id) || p, jobsMap.get(p.id) || [], req.user.id));
   res.json({
     provider,
     fellBack,

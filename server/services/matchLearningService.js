@@ -40,13 +40,13 @@ function extractFeatures({ cats, opportunities, type, has_email, email_verified,
 }
 
 /**
- * Replays the full interaction history into per-feature weights. Cheap at
- * this scale (a full personal job hunt is hundreds, not millions, of rows)
- * so a full retrain after every interaction is simpler and safer than
- * trying to update weights incrementally and risking drift.
+ * Replays one user's full interaction history into their own per-feature
+ * weights. Cheap at this scale (a full personal job hunt is hundreds, not
+ * millions, of rows) so a full retrain after every interaction is simpler
+ * and safer than trying to update weights incrementally and risking drift.
  */
-function retrainWeights() {
-  const rows = getAllInteractionsWithCompany();
+function retrainWeights(userId) {
+  const rows = getAllInteractionsWithCompany(userId);
   const agg = {}; // feature -> { sum, count }
 
   for (const row of rows) {
@@ -60,7 +60,7 @@ function retrainWeights() {
   }
 
   for (const [key, { sum, count }] of Object.entries(agg)) {
-    setLearnedWeight(key, sum / count, count);
+    setLearnedWeight(userId, key, sum / count, count);
   }
 }
 
@@ -70,8 +70,8 @@ function retrainWeights() {
  * features that have crossed MIN_SAMPLES. Returns 0 (neutral) until
  * there's enough history to say anything.
  */
-function scoreCompanyByLearning(company, weights) {
-  const w = weights || getLearnedWeights();
+function scoreCompanyByLearning(company, weights, userId) {
+  const w = weights || getLearnedWeights(userId);
   const feats = extractFeatures({
     cats: JSON.stringify(company.cats || []),
     opportunities: JSON.stringify(company.opportunities || []),
@@ -91,9 +91,9 @@ function scoreCompanyByLearning(company, weights) {
   return matched ? total / matched : 0;
 }
 
-/** For the admin view: which features the model has actually learned. */
-function getLearningStats() {
-  const weights = getLearnedWeights();
+/** For the admin view: which features the model has actually learned for one user. */
+function getLearningStats(userId) {
+  const weights = getLearnedWeights(userId);
   const entries = Object.entries(weights)
     .filter(([, v]) => v.sample_count >= MIN_SAMPLES)
     .map(([feature, v]) => ({ feature, weight: v.weight, sample_count: v.sample_count }))

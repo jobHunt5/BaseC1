@@ -58,9 +58,9 @@ function buildMemberSearchUrl(name, company) {
 /**
  * Build the full profile payload for one company.
  */
-function buildCompanyProfile(company, jobs = null) {
+function buildCompanyProfile(company, jobs = null, userId = null) {
   const qualityByJobId = new Map(getJobQualityForCompany(company.id).map(q => [q.job_id, q]));
-  const jobRows = (jobs || listJobsForCompany(company.id)).map(j => enrichJobRow(j, qualityByJobId));
+  const jobRows = (jobs || listJobsForCompany(company.id, userId)).map(j => enrichJobRow(j, qualityByJobId));
   const websiteJobs = jobRows.filter(j => !j.is_board_listing);
   const boardJobs = jobRows.filter(j => j.is_board_listing);
   const verifiedJobs = jobRows.filter(j => j.is_verified);
@@ -80,7 +80,7 @@ function buildCompanyProfile(company, jobs = null) {
     trust,
     // Behaviour-learning boost: -1 (you tend to skip companies like this)
     // to +1 (you tend to save/apply). 0 until there's enough history.
-    learned_score: scoreCompanyByLearning(company),
+    learned_score: scoreCompanyByLearning(company, null, userId),
     suspicious_job_count: suspiciousJobs.length,
     contact: {
       email: company.email || null,
@@ -112,8 +112,8 @@ function buildCompanyProfile(company, jobs = null) {
   };
 }
 
-function attachProfile(company, jobs = null) {
-  const profile = buildCompanyProfile(company, jobs);
+function attachProfile(company, jobs = null, userId = null) {
+  const profile = buildCompanyProfile(company, jobs, userId);
   return {
     ...company,
     jobs: profile.jobs,

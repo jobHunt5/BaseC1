@@ -8,6 +8,7 @@ const scanRoute = require('./routes/scan');
 const companiesRoute = require('./routes/companies');
 const aiRoute = require('./routes/ai');
 const adminRoute = require('./routes/admin');
+const adminAuthRoute = require('./routes/adminAuth');
 const { getProvider, getCoverageHint } = require('./services/placesService');
 const { applyToProcessEnv } = require('./services/settingsService');
 const { repairOpportunityTargetClassification, repairBogusScrapedJobs, repairBogusTeamMembers } = require('./db');
@@ -21,6 +22,11 @@ app.use(express.json({ limit: '1mb' }));
 
 // Serve the front end from /public.
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// Separate admin page — its own HTML/login, not part of the user app bundle.
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'admin.html'));
+});
 
 app.get('/api/health', (req, res) => {
   const hasGoogleKey = !!process.env.GOOGLE_MAPS_API_KEY;
@@ -45,11 +51,17 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// More specific mount paths must be registered before the catch-all '/api'
+// mount below — companiesRoute's own router.use(requireUser) gate has no
+// path filter, so if it were registered first it would intercept and
+// short-circuit every /api/* request (including /api/admin-auth/login)
+// before Express ever reached these more specific routers.
 app.use('/api/auth', authRoute);
 app.use('/api/scan', scanRoute);
-app.use('/api', companiesRoute);
 app.use('/api/ai', aiRoute);
+app.use('/api/admin-auth', adminAuthRoute);
 app.use('/api/admin', adminRoute);
+app.use('/api', companiesRoute);
 
 // Last-resort error handler so the front end never sees a hanging request.
 app.use((err, req, res, _next) => {

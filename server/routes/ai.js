@@ -25,18 +25,18 @@ router.post('/fit-score', async (req, res) => {
   if (!user) return res.status(401).json({ error: 'Not signed in' });
 
   const { company_id, job_id } = req.body || {};
-  const company = getCompany(company_id);
+  const company = getCompany(company_id, user.id);
   if (!company) return res.status(404).json({ error: 'company not found' });
 
   let job = null;
   if (job_id != null) {
-    job = getJob(job_id);
+    job = getJob(job_id, user.id);
     if (!job || job.company_id !== company_id) {
       return res.status(400).json({ error: 'job does not belong to this company' });
     }
   }
 
-  const result = await scoreFit(company, job, user.profile || {});
+  const result = await scoreFit(company, job, user.profile || {}, user.id);
   if (!result) return res.status(502).json({ error: 'Could not compute a fit score right now — try again shortly.' });
   res.json({ available: true, ...result });
 });

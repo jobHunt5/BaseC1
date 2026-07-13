@@ -78,8 +78,36 @@ db.exec(`
     email                TEXT NOT NULL UNIQUE,
     profile_json         TEXT NOT NULL DEFAULT '{}',
     onboarding_complete  INTEGER NOT NULL DEFAULT 0,
+    suspended            INTEGER NOT NULL DEFAULT 0,
     created_at           INTEGER NOT NULL,
     updated_at           INTEGER NOT NULL
+  );
+
+  -- Per-user pipeline state for a (shared, globally-discovered) company:
+  -- everyone sees the same scanned businesses, but each person's own
+  -- saved/applied/skipped status, notes and star rating are private to them.
+  CREATE TABLE IF NOT EXISTS user_company_status (
+    user_id      TEXT NOT NULL,
+    company_id   TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'none',
+    notes        TEXT NOT NULL DEFAULT '',
+    user_rating  INTEGER NOT NULL DEFAULT 0,
+    updated_at   INTEGER NOT NULL,
+    PRIMARY KEY (user_id, company_id),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_ucs_user_status ON user_company_status(user_id, status);
+
+  -- Per-user "I applied to this specific job" flag (jobs themselves, like
+  -- companies, are a shared discovery pool).
+  CREATE TABLE IF NOT EXISTS user_job_applied (
+    user_id     TEXT NOT NULL,
+    job_id      INTEGER NOT NULL,
+    applied_at  INTEGER NOT NULL,
+    PRIMARY KEY (user_id, job_id),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
   );
 
   -- Full history of save/apply/skip actions, kept even after the company's
@@ -88,6 +116,7 @@ db.exec(`
   -- then later unsaved, then applied, etc).
   CREATE TABLE IF NOT EXISTS interactions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL DEFAULT '',
     company_id  TEXT NOT NULL,
     action      TEXT NOT NULL,  -- 'saved' | 'unsaved' | 'applied' | 'unapplied' | 'skipped' | 'unskipped'
     created_at  INTEGER NOT NULL,
@@ -108,29 +137,34 @@ db.exec(`
     FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
   );
 
-  -- LLM fit-score cache, keyed by (company, job, profile snapshot) so it
-  -- only recomputes when the candidate's own profile meaningfully changes.
+  -- LLM fit-score cache, keyed by (user, company, job, profile snapshot) so
+  -- it only recomputes when that candidate's own profile meaningfully
+  -- changes, and two users never share a cached score.
   CREATE TABLE IF NOT EXISTS ai_fit_scores (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       TEXT NOT NULL DEFAULT '',
     company_id    TEXT NOT NULL,
     job_id        INTEGER,               -- null = company-level fit (no specific job yet)
     profile_hash  TEXT NOT NULL,
     score         INTEGER NOT NULL,      -- 0-100
     reason        TEXT,
     created_at    INTEGER NOT NULL,
-    UNIQUE(company_id, job_id, profile_hash),
+    UNIQUE(user_id, company_id, job_id, profile_hash),
     FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_ai_fit_company ON ai_fit_scores(company_id);
 
   -- Learned preference weights driving the "gets smarter the more you use
-  -- it" ranking boost. One row per feature (industry:dev, employment:
-  -- full-time, has_email, verified, etc); updated after every interaction.
+  -- it" ranking boost — private per user. One row per (user, feature)
+  -- (industry:dev, employment:full-time, has_email, verified, etc);
+  -- updated after every interaction.
   CREATE TABLE IF NOT EXISTS learned_weights (
-    feature_key   TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL DEFAULT '',
+    feature_key   TEXT NOT NULL,
     weight        REAL NOT NULL DEFAULT 0,
     sample_count  INTEGER NOT NULL DEFAULT 0,
-    updated_at    INTEGER NOT NULL
+    updated_at    INTEGER NOT NULL,
+    PRIMARY KEY (user_id, feature_key)
   );
 
   -- Admin-tunable scan defaults (grid size, concurrency, etc). Overrides the
@@ -169,6 +203,52 @@ addColumnIfMissing('companies', 'email_source',  'TEXT');
 addColumnIfMissing('companies', 'email_verified','INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('companies', 'enrich_error',  'TEXT');
 addColumnIfMissing('companies', 'enrich_depth',  "TEXT DEFAULT 'contact'");
+addColumnIfMissing('scans', 'user_id', 'TEXT');
+addColumnIfMissing('users', 'suspended', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('interactions', 'user_id', "TEXT NOT NULL DEFAULT ''");
+db.exec(`CREATE INDEX IF NOT EXISTS idx_interactions_user ON interactions(user_id)`);
+
+// One-time upgrade (2026-07) from single-tenant global pipeline state to
+// per-user pipeline state: companies.status/notes/user_rating and
+// jobs.applied used to be shared columns (fine for a personal tool, wrong
+// once other people can sign up). learned_weights/ai_fit_scores need a
+// user_id in their key, which SQLite can't ALTER onto an existing
+// PRIMARY KEY/UNIQUE, so those two are dropped and recreated by the
+// CREATE TABLE IF NOT EXISTS above. Everything this touches was confirmed
+// disposable dev/QA data (never had a real user), so it's cleared rather
+// than migrated to a guessed owner.
+if (!db.prepare(`PRAGMA table_info(learned_weights)`).all().some(c => c.name === 'user_id')) {
+  db.exec(`
+    DROP TABLE IF EXISTS learned_weights;
+    CREATE TABLE learned_weights (
+      user_id       TEXT NOT NULL DEFAULT '',
+      feature_key   TEXT NOT NULL,
+      weight        REAL NOT NULL DEFAULT 0,
+      sample_count  INTEGER NOT NULL DEFAULT 0,
+      updated_at    INTEGER NOT NULL,
+      PRIMARY KEY (user_id, feature_key)
+    );
+    DROP TABLE IF EXISTS ai_fit_scores;
+    CREATE TABLE ai_fit_scores (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id       TEXT NOT NULL DEFAULT '',
+      company_id    TEXT NOT NULL,
+      job_id        INTEGER,
+      profile_hash  TEXT NOT NULL,
+      score         INTEGER NOT NULL,
+      reason        TEXT,
+      created_at    INTEGER NOT NULL,
+      UNIQUE(user_id, company_id, job_id, profile_hash),
+      FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_fit_company ON ai_fit_scores(company_id);
+  `);
+  db.exec(`DELETE FROM interactions`);
+  db.exec(`UPDATE companies SET status = 'none', notes = '', user_rating = 0`);
+  db.exec(`UPDATE jobs SET applied = 0, applied_at = NULL`);
+  db.exec(`DELETE FROM users`);
+  console.log('[migrate] Upgraded to per-user pipeline data; cleared prior unattributed test/dev data.');
+}
 
 function nowMs() {
   return Date.now();
@@ -288,29 +368,54 @@ function getTeam(id) {
   return safeJSON(row.team, []);
 }
 
-const setCompanyFieldStmt = (field) =>
-  db.prepare(`UPDATE companies SET ${field} = @val, updated_at = @now WHERE id = @id`);
-const setStatusStmt = setCompanyFieldStmt('status');
-const setNotesStmt = setCompanyFieldStmt('notes');
-const setUserRatingStmt = setCompanyFieldStmt('user_rating');
+// Per-user status/notes/rating for a (shared) company — see
+// user_company_status in the schema block for why this isn't a plain
+// column on companies anymore.
+const upsertUcsStmt = db.prepare(`
+  INSERT INTO user_company_status (user_id, company_id, status, notes, user_rating, updated_at)
+  VALUES (@user_id, @company_id, @status, @notes, @user_rating, @now)
+  ON CONFLICT(user_id, company_id) DO UPDATE SET
+    status      = @status,
+    notes       = @notes,
+    user_rating = @user_rating,
+    updated_at  = @now
+`);
+const getUcsStmt = db.prepare(`SELECT status, notes, user_rating FROM user_company_status WHERE user_id = ? AND company_id = ?`);
 
-function setCompanyStatus(id, status) {
-  setStatusStmt.run({ id, val: status, now: nowMs() });
+function getUserCompanyStatus(userId, companyId) {
+  return getUcsStmt.get(userId, companyId) || { status: 'none', notes: '', user_rating: 0 };
 }
-function setCompanyNotes(id, notes) {
-  setNotesStmt.run({ id, val: notes, now: nowMs() });
+
+function upsertUserCompanyStatus(userId, companyId, patch) {
+  const current = getUserCompanyStatus(userId, companyId);
+  const merged = { ...current, ...patch };
+  upsertUcsStmt.run({
+    user_id: userId,
+    company_id: companyId,
+    status: merged.status,
+    notes: merged.notes,
+    user_rating: merged.user_rating,
+    now: nowMs(),
+  });
 }
-function setCompanyUserRating(id, rating) {
-  setUserRatingStmt.run({ id, val: rating, now: nowMs() });
+
+function setCompanyStatus(userId, companyId, status) {
+  upsertUserCompanyStatus(userId, companyId, { status });
+}
+function setCompanyNotes(userId, companyId, notes) {
+  upsertUserCompanyStatus(userId, companyId, { notes });
+}
+function setCompanyUserRating(userId, companyId, rating) {
+  upsertUserCompanyStatus(userId, companyId, { user_rating: rating });
 }
 
 // --- interactions (learning signal) ---
 
 const insertInteractionStmt = db.prepare(`
-  INSERT INTO interactions (company_id, action, created_at) VALUES (@company_id, @action, @now)
+  INSERT INTO interactions (user_id, company_id, action, created_at) VALUES (@user_id, @company_id, @action, @now)
 `);
-function recordInteraction(companyId, action) {
-  insertInteractionStmt.run({ company_id: companyId, action, now: nowMs() });
+function recordInteraction(userId, companyId, action) {
+  insertInteractionStmt.run({ user_id: userId, company_id: companyId, action, now: nowMs() });
 }
 
 const allInteractionsStmt = db.prepare(`
@@ -319,17 +424,18 @@ const allInteractionsStmt = db.prepare(`
          c.email_verified, c.careers_url IS NOT NULL AS has_careers_url
   FROM interactions i
   JOIN companies c ON c.id = i.company_id
+  WHERE i.user_id = ?
   ORDER BY i.created_at ASC
 `);
-function getAllInteractionsWithCompany() {
-  return allInteractionsStmt.all();
+function getAllInteractionsWithCompany(userId) {
+  return allInteractionsStmt.all(userId);
 }
 
 const interactionsForCompanyStmt = db.prepare(`
-  SELECT action, created_at FROM interactions WHERE company_id = ? ORDER BY created_at DESC
+  SELECT action, created_at FROM interactions WHERE user_id = ? AND company_id = ? ORDER BY created_at DESC
 `);
-function getInteractionsForCompany(companyId) {
-  return interactionsForCompanyStmt.all(companyId);
+function getInteractionsForCompany(userId, companyId) {
+  return interactionsForCompanyStmt.all(userId, companyId);
 }
 
 // --- job quality (fake/scam detection) ---
@@ -359,37 +465,37 @@ function getJobQualityForCompany(companyId) {
 
 const getAiFitScoreStmt = db.prepare(`
   SELECT score, reason, created_at FROM ai_fit_scores
-  WHERE company_id = @company_id AND (job_id IS @job_id) AND profile_hash = @profile_hash
+  WHERE user_id = @user_id AND company_id = @company_id AND (job_id IS @job_id) AND profile_hash = @profile_hash
 `);
-function getAiFitScore(companyId, jobId, profileHash) {
-  return getAiFitScoreStmt.get({ company_id: companyId, job_id: jobId ?? null, profile_hash: profileHash }) || null;
+function getAiFitScore(userId, companyId, jobId, profileHash) {
+  return getAiFitScoreStmt.get({ user_id: userId, company_id: companyId, job_id: jobId ?? null, profile_hash: profileHash }) || null;
 }
 
 const setAiFitScoreStmt = db.prepare(`
-  INSERT INTO ai_fit_scores (company_id, job_id, profile_hash, score, reason, created_at)
-  VALUES (@company_id, @job_id, @profile_hash, @score, @reason, @now)
-  ON CONFLICT(company_id, job_id, profile_hash) DO UPDATE SET score = excluded.score, reason = excluded.reason, created_at = excluded.created_at
+  INSERT INTO ai_fit_scores (user_id, company_id, job_id, profile_hash, score, reason, created_at)
+  VALUES (@user_id, @company_id, @job_id, @profile_hash, @score, @reason, @now)
+  ON CONFLICT(user_id, company_id, job_id, profile_hash) DO UPDATE SET score = excluded.score, reason = excluded.reason, created_at = excluded.created_at
 `);
-function setAiFitScore(companyId, jobId, profileHash, score, reason) {
-  setAiFitScoreStmt.run({ company_id: companyId, job_id: jobId ?? null, profile_hash: profileHash, score, reason: reason || null, now: nowMs() });
+function setAiFitScore(userId, companyId, jobId, profileHash, score, reason) {
+  setAiFitScoreStmt.run({ user_id: userId, company_id: companyId, job_id: jobId ?? null, profile_hash: profileHash, score, reason: reason || null, now: nowMs() });
 }
 
 // --- learned preference weights ---
 
-const allWeightsStmt = db.prepare(`SELECT * FROM learned_weights`);
-function getLearnedWeights() {
+const allWeightsStmt = db.prepare(`SELECT feature_key, weight, sample_count FROM learned_weights WHERE user_id = ?`);
+function getLearnedWeights(userId) {
   const out = {};
-  for (const row of allWeightsStmt.all()) out[row.feature_key] = { weight: row.weight, sample_count: row.sample_count };
+  for (const row of allWeightsStmt.all(userId || '')) out[row.feature_key] = { weight: row.weight, sample_count: row.sample_count };
   return out;
 }
 
 const upsertWeightStmt = db.prepare(`
-  INSERT INTO learned_weights (feature_key, weight, sample_count, updated_at)
-  VALUES (@feature_key, @weight, @sample_count, @now)
-  ON CONFLICT(feature_key) DO UPDATE SET weight = excluded.weight, sample_count = excluded.sample_count, updated_at = excluded.updated_at
+  INSERT INTO learned_weights (user_id, feature_key, weight, sample_count, updated_at)
+  VALUES (@user_id, @feature_key, @weight, @sample_count, @now)
+  ON CONFLICT(user_id, feature_key) DO UPDATE SET weight = excluded.weight, sample_count = excluded.sample_count, updated_at = excluded.updated_at
 `);
-function setLearnedWeight(featureKey, weight, sampleCount) {
-  upsertWeightStmt.run({ feature_key: featureKey, weight, sample_count: sampleCount, now: nowMs() });
+function setLearnedWeight(userId, featureKey, weight, sampleCount) {
+  upsertWeightStmt.run({ user_id: userId, feature_key: featureKey, weight, sample_count: sampleCount, now: nowMs() });
 }
 
 // --- admin-tunable settings ---
@@ -427,39 +533,51 @@ function setCompanyEmail(id, { email, email_source, email_verified }) {
   });
 }
 
-const getCompanyStmt = db.prepare('SELECT * FROM companies WHERE id = ?');
-function getCompany(id) {
-  const row = getCompanyStmt.get(id);
+// Every SELECT below joins in the requesting user's own status/notes/
+// rating (user_company_status is per-user; companies itself is a shared
+// discovery pool — see schema block). userId is required.
+const UCS_JOIN = `LEFT JOIN user_company_status ucs ON ucs.company_id = c.id AND ucs.user_id = @user_id`;
+const UCS_COLS = `COALESCE(ucs.status, 'none') AS ucs_status, COALESCE(ucs.notes, '') AS ucs_notes, COALESCE(ucs.user_rating, 0) AS ucs_rating`;
+
+const getCompanyStmt = db.prepare(`SELECT c.*, ${UCS_COLS} FROM companies c ${UCS_JOIN} WHERE c.id = @id`);
+function getCompany(id, userId) {
+  const row = getCompanyStmt.get({ id, user_id: userId || '' });
   return row ? hydrateCompany(row) : null;
 }
 
 const listCompaniesInBoundsStmt = db.prepare(`
-  SELECT * FROM companies
-  WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
+  SELECT c.*, ${UCS_COLS} FROM companies c
+  ${UCS_JOIN}
+  WHERE c.lat BETWEEN @south AND @north AND c.lng BETWEEN @west AND @east
 `);
-function listCompaniesInBounds({ south, west, north, east }) {
-  return listCompaniesInBoundsStmt.all(south, north, west, east).map(hydrateCompany);
+function listCompaniesInBounds({ south, west, north, east }, userId) {
+  return listCompaniesInBoundsStmt.all({ south, west, north, east, user_id: userId || '' }).map(hydrateCompany);
 }
 
-const listAllCompaniesStmt = db.prepare('SELECT * FROM companies ORDER BY updated_at DESC');
-function listAllCompanies() {
-  return listAllCompaniesStmt.all().map(hydrateCompany);
+const listAllCompaniesStmt = db.prepare(`SELECT c.*, ${UCS_COLS} FROM companies c ${UCS_JOIN} ORDER BY c.updated_at DESC`);
+function listAllCompanies(userId) {
+  return listAllCompaniesStmt.all({ user_id: userId || '' }).map(hydrateCompany);
 }
 
 const listInterestedStmt = db.prepare(`
-  SELECT * FROM companies WHERE status = 'interested' ORDER BY updated_at DESC
+  SELECT c.*, ${UCS_COLS} FROM companies c
+  ${UCS_JOIN}
+  WHERE ucs.status = 'interested' ORDER BY ucs.updated_at DESC
 `);
 const listAppliedStmt = db.prepare(`
-  SELECT DISTINCT c.* FROM companies c
-  LEFT JOIN jobs j ON j.company_id = c.id AND j.applied = 1
-  WHERE c.status = 'applied' OR j.applied = 1
+  SELECT DISTINCT c.*, ${UCS_COLS} FROM companies c
+  ${UCS_JOIN}
+  LEFT JOIN jobs j ON j.company_id = c.id
+  LEFT JOIN user_job_applied uja ON uja.job_id = j.id AND uja.user_id = @user_id
+  WHERE ucs.status = 'applied' OR uja.user_id IS NOT NULL
   ORDER BY c.updated_at DESC
 `);
 
-function listCompaniesByPipeline(kind) {
+function listCompaniesByPipeline(kind, userId) {
+  const params = { user_id: userId || '' };
   const rows = kind === 'applied'
-    ? listAppliedStmt.all()
-    : listInterestedStmt.all();
+    ? listAppliedStmt.all(params)
+    : listInterestedStmt.all(params);
   return rows.map(hydrateCompany);
 }
 
@@ -490,6 +608,12 @@ function hydrateCompany(row) {
     socials: safeJSON(row.socials, {}),
     all_emails: allEmails,
     team: sanitizeTeam(safeJSON(row.team, [])),
+    // Per-user pipeline state, joined in via user_company_status — see
+    // getCompany/listCompaniesInBounds/etc. Falls back to defaults when
+    // the query didn't join it in (e.g. admin-side global company lookups).
+    status: row.ucs_status ?? row.status ?? 'none',
+    notes: row.ucs_notes ?? row.notes ?? '',
+    user_rating: row.ucs_rating ?? row.user_rating ?? 0,
   };
 }
 
@@ -539,15 +663,28 @@ function upsertJob(j) {
   });
 }
 
-const listJobsForCompanyStmt = db.prepare('SELECT * FROM jobs WHERE company_id = ? ORDER BY id ASC');
-function listJobsForCompany(companyId) {
-  return listJobsForCompanyStmt.all(companyId);
+// "applied" is per-user (user_job_applied); jobs themselves are shared.
+const JOB_UJA_JOIN = `LEFT JOIN user_job_applied uja ON uja.job_id = j.id AND uja.user_id = @user_id`;
+const JOB_UJA_COLS = `(uja.user_id IS NOT NULL) AS uja_applied, uja.applied_at AS uja_applied_at`;
+
+function hydrateJob(row) {
+  if (!row) return row;
+  return { ...row, applied: row.uja_applied ? 1 : 0, applied_at: row.uja_applied_at ?? null };
+}
+
+const listJobsForCompanyStmt = db.prepare(`
+  SELECT j.*, ${JOB_UJA_COLS} FROM jobs j
+  ${JOB_UJA_JOIN}
+  WHERE j.company_id = @company_id ORDER BY j.id ASC
+`);
+function listJobsForCompany(companyId, userId) {
+  return listJobsForCompanyStmt.all({ company_id: companyId, user_id: userId || '' }).map(hydrateJob);
 }
 
 // Batch-load jobs for many companies in one query instead of N round-trips.
 // Returns a Map of company_id -> jobs[]. Chunked to stay well under SQLite's
 // bound-parameter limit.
-function jobsGroupedFor(ids) {
+function jobsGroupedFor(ids, userId) {
   const map = new Map();
   const unique = [...new Set((ids || []).filter(v => v != null))];
   if (!unique.length) return map;
@@ -556,8 +693,13 @@ function jobsGroupedFor(ids) {
     const slice = unique.slice(i, i + CHUNK);
     const placeholders = slice.map(() => '?').join(',');
     const rows = db
-      .prepare(`SELECT * FROM jobs WHERE company_id IN (${placeholders}) ORDER BY company_id, id ASC`)
-      .all(...slice);
+      .prepare(`
+        SELECT j.*, ${JOB_UJA_COLS} FROM jobs j
+        LEFT JOIN user_job_applied uja ON uja.job_id = j.id AND uja.user_id = ?
+        WHERE j.company_id IN (${placeholders}) ORDER BY j.company_id, j.id ASC
+      `)
+      .all(userId || '', ...slice)
+      .map(hydrateJob);
     for (const r of rows) {
       let arr = map.get(r.company_id);
       if (!arr) { arr = []; map.set(r.company_id, arr); }
@@ -567,20 +709,19 @@ function jobsGroupedFor(ids) {
   return map;
 }
 
-const setJobAppliedStmt = db.prepare(
-  'UPDATE jobs SET applied = @applied, applied_at = @applied_at WHERE id = @id'
-);
-function setJobApplied(id, applied) {
-  setJobAppliedStmt.run({
-    id,
-    applied: applied ? 1 : 0,
-    applied_at: applied ? nowMs() : null,
-  });
+const upsertUjaStmt = db.prepare(`
+  INSERT INTO user_job_applied (user_id, job_id, applied_at) VALUES (@user_id, @job_id, @now)
+  ON CONFLICT(user_id, job_id) DO UPDATE SET applied_at = @now
+`);
+const deleteUjaStmt = db.prepare(`DELETE FROM user_job_applied WHERE user_id = @user_id AND job_id = @job_id`);
+function setJobApplied(userId, id, applied) {
+  if (applied) upsertUjaStmt.run({ user_id: userId, job_id: id, now: nowMs() });
+  else deleteUjaStmt.run({ user_id: userId, job_id: id });
 }
 
-const getJobStmt = db.prepare('SELECT * FROM jobs WHERE id = ?');
-function getJob(id) {
-  return getJobStmt.get(id);
+const getJobStmt = db.prepare(`SELECT j.*, ${JOB_UJA_COLS} FROM jobs j ${JOB_UJA_JOIN} WHERE j.id = @id`);
+function getJob(id, userId) {
+  return hydrateJob(getJobStmt.get({ id, user_id: userId || '' }));
 }
 
 const deleteUnappliedJobsStmt = db.prepare(
@@ -614,23 +755,36 @@ function scoreJobsForCompany(companyId) {
 // --- scans ---
 
 const recordScanStmt = db.prepare(`
-  INSERT INTO scans (south, west, north, east, provider, result_count, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO scans (south, west, north, east, provider, result_count, user_id, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `);
-function recordScan({ south, west, north, east, provider, resultCount }) {
-  recordScanStmt.run(south, west, north, east, provider, resultCount, nowMs());
+function recordScan({ south, west, north, east, provider, resultCount }, userId) {
+  recordScanStmt.run(south, west, north, east, provider, resultCount, userId || null, nowMs());
 }
 
-const recentScansStmt = db.prepare(`SELECT * FROM scans ORDER BY created_at DESC LIMIT 10`);
+const recentScansStmt = db.prepare(`
+  SELECT s.*, u.email AS user_email FROM scans s
+  LEFT JOIN users u ON u.id = s.user_id
+  ORDER BY s.created_at DESC LIMIT 10
+`);
 const scanTotalsStmt = db.prepare(`SELECT COUNT(*) AS scan_count, COALESCE(SUM(result_count), 0) AS total_found FROM scans`);
 function getScanStats() {
   return { recent: recentScansStmt.all(), totals: scanTotalsStmt.get() };
 }
 
-const statusCountsStmt = db.prepare(`SELECT status, COUNT(*) AS n FROM companies GROUP BY status`);
+// Pipeline funnel across every user (admin overview) — status now lives in
+// user_company_status, one row per (user, company) they've touched; "none"
+// is everyone who saw a company but never set a status, i.e. everything
+// else in the shared discovery pool.
+const statusCountsStmt = db.prepare(`SELECT status, COUNT(*) AS n FROM user_company_status GROUP BY status`);
+const companyCountStmt = db.prepare(`SELECT COUNT(*) AS n FROM companies`);
 function getStatusCounts() {
   const out = { none: 0, interested: 0, applied: 0, skipped: 0 };
-  for (const row of statusCountsStmt.all()) out[row.status] = row.n;
+  let touched = 0;
+  for (const row of statusCountsStmt.all()) {
+    if (row.status !== 'none') { out[row.status] = row.n; touched += row.n; }
+  }
+  out.none = Math.max(0, (companyCountStmt.get().n || 0) - touched);
   return out;
 }
 
@@ -745,6 +899,7 @@ function hydrateUser(row) {
     email: row.email,
     profile,
     onboardingComplete: !!row.onboarding_complete,
+    suspended: !!row.suspended,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -767,6 +922,50 @@ function getUserByEmail(email) {
 
 function getUserById(id) {
   return hydrateUser(getUserByIdStmt.get(id));
+}
+
+// --- admin: user management ---
+
+const allUsersWithStatsStmt = db.prepare(`
+  SELECT u.id, u.email, u.profile_json, u.onboarding_complete, u.suspended, u.created_at, u.updated_at,
+    (SELECT COUNT(*) FROM user_company_status ucs WHERE ucs.user_id = u.id AND ucs.status = 'interested') AS saved_count,
+    (SELECT COUNT(*) FROM user_company_status ucs WHERE ucs.user_id = u.id AND ucs.status = 'applied') AS applied_count,
+    (SELECT COUNT(*) FROM user_company_status ucs WHERE ucs.user_id = u.id AND ucs.status = 'skipped') AS skipped_count,
+    (SELECT COUNT(*) FROM interactions i WHERE i.user_id = u.id) AS interaction_count
+  FROM users u
+  ORDER BY u.created_at DESC
+`);
+function getAllUsersWithStats() {
+  return allUsersWithStatsStmt.all().map(row => ({
+    ...hydrateUser(row),
+    savedCount: row.saved_count,
+    appliedCount: row.applied_count,
+    skippedCount: row.skipped_count,
+    interactionCount: row.interaction_count,
+  }));
+}
+
+const setUserSuspendedStmt = db.prepare(`UPDATE users SET suspended = @suspended, updated_at = @now WHERE id = @id`);
+function setUserSuspended(id, suspended) {
+  setUserSuspendedStmt.run({ id, suspended: suspended ? 1 : 0, now: nowMs() });
+}
+
+const deleteUserStmt = db.prepare(`DELETE FROM users WHERE id = ?`);
+const deleteUserUcsStmt = db.prepare(`DELETE FROM user_company_status WHERE user_id = ?`);
+const deleteUserInteractionsStmt = db.prepare(`DELETE FROM interactions WHERE user_id = ?`);
+const deleteUserWeightsStmt = db.prepare(`DELETE FROM learned_weights WHERE user_id = ?`);
+const deleteUserAiFitStmt = db.prepare(`DELETE FROM ai_fit_scores WHERE user_id = ?`);
+const deleteUserAppliedStmt = db.prepare(`DELETE FROM user_job_applied WHERE user_id = ?`);
+const deleteUserTx = db.transaction((id) => {
+  deleteUserUcsStmt.run(id);
+  deleteUserInteractionsStmt.run(id);
+  deleteUserWeightsStmt.run(id);
+  deleteUserAiFitStmt.run(id);
+  deleteUserAppliedStmt.run(id);
+  deleteUserStmt.run(id);
+});
+function deleteUser(id) {
+  deleteUserTx(id);
 }
 
 module.exports = {
@@ -796,6 +995,9 @@ module.exports = {
   upsertUser,
   getUserByEmail,
   getUserById,
+  getAllUsersWithStats,
+  setUserSuspended,
+  deleteUser,
   recordInteraction,
   getAllInteractionsWithCompany,
   getInteractionsForCompany,
