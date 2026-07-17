@@ -373,7 +373,9 @@ body {
   background: linear-gradient(to bottom, transparent, var(--surface));
   pointer-events: none;
 }
-.filter-tag { padding: 5px 11px; border-radius: 20px; font-size: 11px; border: 1px solid var(--border); cursor: pointer; transition: all 0.15s; color: var(--muted); background: transparent; }
+.filter-tag { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border-radius: 20px; font-size: 11px; border: 1px solid var(--border); cursor: pointer; transition: all 0.15s; color: var(--muted); background: transparent; }
+.filter-tag .ind-icon { opacity: 0.8; }
+.filter-tag.active .ind-icon { opacity: 1; }
 .filter-tag:hover { border-color: var(--accent); color: var(--accent); }
 .filter-tag.active { border-color: var(--accent); color: var(--accent); font-weight: 600; background: rgba(108, 99, 255, 0.12); }
 .filter-tag[data-cat="all"].active { color: var(--text); border-color: var(--text); background: rgba(255, 255, 255, 0.05); }
@@ -741,12 +743,22 @@ textarea.form-input { resize: vertical; min-height: 60px; line-height: 1.5; }
 .rating-row { display: flex; gap: 6px; }
 .star { font-size: 20px; cursor: pointer; color: var(--border); transition: color 0.1s; }
 .star.lit { color: var(--yellow); }
+.star .ui-icon { transition: color 0.1s; }
+.star.lit .ui-icon { fill: currentColor; }
+.heart-btn.applied .ui-icon { fill: currentColor; }
 
 /* Empty state */
 .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; text-align: center; color: var(--muted); }
 .empty-state .big-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.3; }
 .empty-state h3 { font-size: 15px; color: var(--text); margin-bottom: 8px; }
-.empty-state p { font-size: 13px; line-height: 1.6; }
+.empty-state p { font-size: 13px; line-height: 1.6; max-width: 280px; }
+.empty-state-badge {
+  width: 64px; height: 64px; border-radius: 18px; margin-bottom: 18px;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, rgba(108, 99, 255, 0.18), rgba(78, 205, 196, 0.12));
+  border: 1px solid rgba(108, 99, 255, 0.3); color: var(--accent);
+}
+.empty-state-cta { margin-top: 18px; }
 
 /* Loading */
 .loading-bar { position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--accent), var(--accent2), var(--accent)); background-size: 200%; animation: shimmer 1.2s infinite; z-index: 9999; }
@@ -1283,8 +1295,24 @@ body.auth-locked .topbar { filter: blur(2px); pointer-events: none; user-select:
   color: #fff; font-size: 9px; font-weight: 900; display: flex; align-items: center; justify-content: center;
 }
 
-.edu-row { margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
-.edu-row-split { display: grid; grid-template-columns: 1fr 100px; gap: 8px; margin-top: 8px; }
+/* Industry icon sprite — <svg><use> referencing #icon-<name> symbols
+   defined once in index.html. Color always follows the surrounding text
+   via currentColor, so hover/selected states tint it automatically. */
+.ind-icon { flex-shrink: 0; color: inherit; opacity: 0.85; }
+.chip-opt.on .ind-icon { opacity: 1; color: var(--accent2); }
+.chip-opt-label { display: flex; align-items: center; gap: 7px; }
+
+/* General UI icons — inline replacement for emoji in button/badge text.
+   Sits on the text baseline via a small negative offset rather than
+   vertical-align:middle, which sat icons too high next to lowercase text. */
+.ui-icon { flex-shrink: 0; color: inherit; position: relative; top: 2px; margin-right: 3px; }
+.ui-icon.no-gap { margin-right: 0; }
+
+.edu-row, .cert-row {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border);
+}
+.edu-row-split { display: grid; grid-template-columns: 1fr 100px; gap: 8px; }
 .ob-add-btn { width: 100%; margin-top: 4px; }
 
 .label-opt { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); }

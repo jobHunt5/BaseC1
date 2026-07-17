@@ -8,9 +8,20 @@
 </head>
 <body>
 
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="icon-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>
+    </symbol>
+    <symbol id="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/>
+    </symbol>
+  </defs>
+</svg>
+
 <div class="admin-login-screen" id="loginScreen">
   <div class="admin-login-card">
-    <div class="admin-login-logo"><span class="logo-mark">🎯</span>Area<span>Hunt</span> <span class="admin-badge">Admin</span></div>
+    <div class="admin-login-logo"><span class="logo-mark"><svg width="14" height="14"><use href="#icon-logo"></use></svg></span>Area<span>Hunt</span> <span class="admin-badge">Admin</span></div>
     <p class="admin-login-hint">Separate from the regular user sign-in. This controls every user's account and the shared scan settings.</p>
     <label class="admin-form-label">Admin password</label>
     <input type="password" id="adminPassword" class="admin-input" placeholder="••••••••" autocomplete="current-password" />
@@ -21,7 +32,7 @@
 
 <div class="admin-shell hidden" id="adminShell">
   <header class="admin-topbar">
-    <div class="admin-login-logo"><span class="logo-mark">🎯</span>Area<span>Hunt</span> <span class="admin-badge">Admin</span></div>
+    <div class="admin-login-logo"><span class="logo-mark"><svg width="14" height="14"><use href="#icon-logo"></use></svg></span>Area<span>Hunt</span> <span class="admin-badge">Admin</span></div>
     <nav class="admin-tabs">
       <button type="button" class="admin-tab active" data-tab="overview" onclick="AdminApp.switchTab('overview')">Overview</button>
       <button type="button" class="admin-tab" data-tab="users" onclick="AdminApp.switchTab('users')">Users</button>
@@ -42,7 +53,7 @@
 <div class="admin-drawer" id="userDrawer">
   <div class="admin-drawer-header">
     <div id="drawerTitle">User</div>
-    <button type="button" class="admin-drawer-close" onclick="AdminApp.closeUserDrawer()">✕</button>
+    <button type="button" class="admin-drawer-close" onclick="AdminApp.closeUserDrawer()"><svg width="14" height="14"><use href="#icon-close"></use></svg></button>
   </div>
   <div class="admin-drawer-body" id="drawerBody"></div>
 </div>

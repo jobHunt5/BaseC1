@@ -7,9 +7,9 @@ const AuthGate = (() => {
   const SECTOR_OPTIONS = typeof AreaHuntIndustries !== 'undefined'
     ? AreaHuntIndustries.onboardingOptions()
     : [
-      { id: 'all', label: '✨ All industries', desc: 'Open to any type of work' },
-      { id: 'design', label: '🎨 Designer', desc: 'UI/UX, branding, graphic' },
-      { id: 'dev', label: '💻 Developer', desc: 'Software, web, mobile' },
+      { id: 'all', label: 'All industries', icon: 'sparkles', desc: 'Open to any type of work' },
+      { id: 'design', label: 'Designer', icon: 'design', desc: 'UI/UX, branding, graphic' },
+      { id: 'dev', label: 'Developer', icon: 'dev', desc: 'Software, web, mobile' },
     ];
 
   const EMPLOYMENT_OPTIONS = [
@@ -24,6 +24,13 @@ const AuthGate = (() => {
     { id: 'remote', label: 'Remote' },
     { id: 'hybrid', label: 'Hybrid' },
     { id: 'on-site', label: 'On-site' },
+  ];
+
+  const TIME_COMMITMENT_OPTIONS = [
+    { id: 'browsing', label: 'Just browsing', desc: 'Casually looking, no rush' },
+    { id: 'few-hours', label: 'A few hours a week', desc: 'Fitting it around other things' },
+    { id: 'active', label: 'Actively searching', desc: '10–20 hrs/week' },
+    { id: 'all-in', label: 'All in', desc: '20+ hrs/week, urgent' },
   ];
 
   // Industries where a portfolio link is a normal part of applying. Used to
@@ -47,11 +54,12 @@ const AuthGate = (() => {
       jobSectors: [],
       employmentTypes: [],
       workModes: [],
+      timeCommitment: '',
       education: [],
-      qualifications: [],
       experienceYears: '',
       currentRole: '',
       experienceSummary: '',
+      certifications: [],
       skills: [],
       portfolioUrl: '',
       // null = "not yet decided" — Step 5 fills in a sensible default based
@@ -255,11 +263,11 @@ const AuthGate = (() => {
   }
 
   const STEP_META = {
-    1: { icon: '👤', label: 'About you' },
-    2: { icon: '💼', label: 'Work preferences' },
-    3: { icon: '📚', label: 'Education' },
-    4: { icon: '⭐', label: 'Experience' },
-    5: { icon: '📁', label: 'Portfolio' },
+    1: { icon: 'person', label: 'About you' },
+    2: { icon: 'briefcase', label: 'Work preferences' },
+    3: { icon: 'book', label: 'Education' },
+    4: { icon: 'star', label: 'Experience' },
+    5: { icon: 'folder', label: 'Portfolio' },
   };
 
   function renderProgress() {
@@ -272,7 +280,8 @@ const AuthGate = (() => {
     const nodes = [];
     for (let i = 1; i <= total; i++) {
       const state = i < step ? 'done' : i === step ? 'active' : '';
-      nodes.push(`<div class="ob-step-node ${state}">${i < step ? '✓' : i}</div>`);
+      const doneIcon = typeof AreaHuntIndustries !== 'undefined' ? AreaHuntIndustries.iconSvg('check', 12) : '✓';
+      nodes.push(`<div class="ob-step-node ${state}">${i < step ? doneIcon : i}</div>`);
       if (i < total) nodes.push(`<div class="ob-step-line ${i < step ? 'done' : ''}"></div>`);
     }
     el.innerHTML = `<div class="ob-stepper">${nodes.join('')}</div>`;
@@ -283,7 +292,7 @@ const AuthGate = (() => {
     renderProgress();
     document.getElementById('authGateBody').innerHTML = `
       <div class="auth-brand">
-        <div class="auth-brand-mark">🎯</div>
+        <div class="auth-brand-mark"><svg width="22" height="22"><use href="#icon-logo"></use></svg></div>
         <div class="auth-logo">Area<span>Hunt</span></div>
         <p>Sign in to save your job hunt, preferences, and applications.</p>
       </div>
@@ -344,7 +353,9 @@ const AuthGate = (() => {
   function chipGroup(id, options, selected, multi = true) {
     return `<div class="chip-group" id="${id}">${options.map(o => {
       const on = selected.includes(o.id);
-      return `<button type="button" class="chip-opt ${on ? 'on' : ''}" data-id="${o.id}">${o.label}${o.desc ? `<span class="chip-desc">${o.desc}</span>` : ''}</button>`;
+      const icon = o.icon && typeof AreaHuntIndustries !== 'undefined' ? AreaHuntIndustries.iconSvg(o.icon, 15) : '';
+      const label = icon ? `<span class="chip-opt-label">${icon}<span>${o.label}</span></span>` : o.label;
+      return `<button type="button" class="chip-opt ${on ? 'on' : ''}" data-id="${o.id}">${label}${o.desc ? `<span class="chip-desc">${o.desc}</span>` : ''}</button>`;
     }).join('')}</div>`;
   }
 
@@ -366,6 +377,20 @@ const AuthGate = (() => {
         el.querySelectorAll('.chip-opt').forEach(b => {
           b.classList.toggle('on', (draft.jobSectors || []).includes(b.dataset.id));
         });
+      };
+    });
+  }
+
+  // Single-select chip group backed by a plain string field (not an array
+  // like bindChipGroup's multi=false path stores) — used for time commitment,
+  // where "one value or none" is the natural shape.
+  function bindSingleSelectChip(id, field) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.querySelectorAll('.chip-opt').forEach(btn => {
+      btn.onclick = () => {
+        draft[field] = draft[field] === btn.dataset.id ? '' : btn.dataset.id;
+        el.querySelectorAll('.chip-opt').forEach(b => b.classList.toggle('on', b.dataset.id === draft[field]));
       };
     });
   }
@@ -404,11 +429,25 @@ const AuthGate = (() => {
       </div>`;
   }
 
+  function certRow(cert, idx) {
+    return `
+      <div class="cert-row" data-idx="${idx}">
+        <input class="form-input" placeholder="Certification (e.g. Adobe Certified Expert)" data-field="name" value="${esc(cert.name)}" />
+        <div class="edu-row-split">
+          <input class="form-input" placeholder="Issuing body" data-field="issuer" value="${esc(cert.issuer)}" />
+          <input class="form-input" placeholder="Year" data-field="year" value="${esc(cert.year)}" />
+        </div>
+        <input class="form-input" placeholder="Credential URL (optional)" data-field="url" value="${esc(cert.url)}" />
+        ${idx > 0 ? `<button type="button" class="link-btn-small remove-cert">Remove</button>` : ''}
+      </div>`;
+  }
+
   function stepHeader() {
     const meta = STEP_META[step] || {};
+    const icon = meta.icon && typeof AreaHuntIndustries !== 'undefined' ? AreaHuntIndustries.iconSvg(meta.icon, 18) : '';
     return `
       <div class="ob-step-header">
-        <span class="ob-step-icon">${meta.icon || ''}</span>
+        <span class="ob-step-icon">${icon}</span>
         <span class="ob-step-eyebrow">Step ${step} of 5</span>
       </div>`;
   }
@@ -447,10 +486,13 @@ const AuthGate = (() => {
         <label class="form-label">Employment type</label>
         ${chipGroup('obEmployment', EMPLOYMENT_OPTIONS, draft.employmentTypes)}
         <label class="form-label">Work mode</label>
-        ${chipGroup('obWorkMode', WORK_MODE_OPTIONS, draft.workModes)}`;
+        ${chipGroup('obWorkMode', WORK_MODE_OPTIONS, draft.workModes)}
+        <label class="form-label">How much time can you invest in job hunting?</label>
+        ${chipGroup('obTimeCommitment', TIME_COMMITMENT_OPTIONS, draft.timeCommitment ? [draft.timeCommitment] : [])}`;
       bindSectorChips();
       bindChipGroup('obEmployment', 'employmentTypes');
       bindChipGroup('obWorkMode', 'workModes');
+      bindSingleSelectChip('obTimeCommitment', 'timeCommitment');
     } else if (step === 3) {
       if (!draft.education.length) draft.education = [{ degree: '', field: '', institution: '', year: '' }];
       body.innerHTML = `
@@ -460,11 +502,13 @@ const AuthGate = (() => {
         <div id="eduList">${draft.education.map(educationRow).join('')}</div>
         <button type="button" class="btn btn-outline ob-add-btn" id="addEdu">+ Add another</button>`;
       document.getElementById('addEdu').onclick = () => {
+        collectStep();
         draft.education.push({ degree: '', field: '', institution: '', year: '' });
         renderOnboardingStep();
       };
       body.querySelectorAll('.remove-edu').forEach(btn => {
         btn.onclick = () => {
+          collectStep();
           const row = btn.closest('.edu-row');
           draft.education.splice(parseInt(row.dataset.idx, 10), 1);
           renderOnboardingStep();
@@ -473,7 +517,7 @@ const AuthGate = (() => {
     } else if (step === 4) {
       body.innerHTML = `
         ${stepHeader()}
-        <h2 class="ob-title">Experience & qualifications</h2>
+        <h2 class="ob-title">Experience & certifications</h2>
         <p class="ob-sub">Helps us filter roles at your level and pitch you correctly.</p>
         <label class="form-label">Years of experience</label>
         <select class="form-input" id="obExpYears">
@@ -484,10 +528,25 @@ const AuthGate = (() => {
         <input class="form-input" id="obCurrentRole" value="${esc(draft.currentRole)}" placeholder="Freelance UI Designer" />
         <label class="form-label">Experience summary</label>
         <textarea class="form-input" id="obExpSummary" rows="3" placeholder="Brief career highlights…">${esc(draft.experienceSummary)}</textarea>
-        <label class="form-label">Qualifications & certs</label>
-        <input class="form-input" id="obQuals" value="${esc((draft.qualifications || []).join(', '))}" placeholder="Adobe Certified, Google UX, White Card…" />
+        <label class="form-label">Certifications <span class="label-opt">(optional)</span></label>
+        <div id="certList">${(draft.certifications || []).map(certRow).join('')}</div>
+        <button type="button" class="btn btn-outline ob-add-btn" id="addCert">+ Add certification</button>
         <label class="form-label">Key skills</label>
         <input class="form-input" id="obSkills" value="${esc((draft.skills || []).join(', '))}" placeholder="UI/UX, Figma, React, brand identity…" />`;
+      document.getElementById('addCert').onclick = () => {
+        collectStep();
+        draft.certifications = draft.certifications || [];
+        draft.certifications.push({ name: '', issuer: '', year: '', url: '' });
+        renderOnboardingStep();
+      };
+      body.querySelectorAll('.remove-cert').forEach(btn => {
+        btn.onclick = () => {
+          collectStep();
+          const row = btn.closest('.cert-row');
+          draft.certifications.splice(parseInt(row.dataset.idx, 10), 1);
+          renderOnboardingStep();
+        };
+      });
     } else if (step === 5) {
       if (draft.portfolioRequired === null || draft.portfolioRequired === undefined) {
         draft.portfolioRequired = (draft.jobSectors || []).some(id => PORTFOLIO_RELEVANT_SECTORS.includes(id));
@@ -511,9 +570,10 @@ const AuthGate = (() => {
         <textarea class="form-input" id="obSig" rows="2" placeholder="Name&#10;email&#10;phone">${esc(draft.signature)}</textarea>`;
     }
 
+    const backIcon = typeof AreaHuntIndustries !== 'undefined' ? AreaHuntIndustries.iconSvg('chevron-left', 13) : '';
     nav.innerHTML = `
-      ${step > 1 ? '<button type="button" class="btn btn-outline" id="obBack">← Back</button>' : '<span></span>'}
-      <button type="button" class="btn btn-primary" id="obNext">${step === 5 ? 'Finish & start hunting' : 'Continue →'}</button>`;
+      ${step > 1 ? `<button type="button" class="btn btn-outline" id="obBack">${backIcon}Back</button>` : '<span></span>'}
+      <button type="button" class="btn btn-primary" id="obNext">${step === 5 ? 'Finish & start hunting' : 'Continue'}</button>`;
     document.getElementById('obBack')?.addEventListener('click', () => { collectStep(); step--; renderOnboardingStep(); });
     document.getElementById('obNext').addEventListener('click', submitStep);
   }
@@ -537,8 +597,14 @@ const AuthGate = (() => {
       draft.experienceYears = document.getElementById('obExpYears')?.value || '';
       draft.currentRole = document.getElementById('obCurrentRole')?.value.trim() || '';
       draft.experienceSummary = document.getElementById('obExpSummary')?.value.trim() || '';
-      draft.qualifications = (document.getElementById('obQuals')?.value || '')
-        .split(',').map(s => s.trim()).filter(Boolean);
+      draft.certifications = [];
+      document.querySelectorAll('.cert-row').forEach(row => {
+        const entry = {};
+        row.querySelectorAll('[data-field]').forEach(inp => {
+          entry[inp.dataset.field] = inp.value.trim();
+        });
+        if (entry.name || entry.issuer) draft.certifications.push(entry);
+      });
       draft.skills = (document.getElementById('obSkills')?.value || '')
         .split(',').map(s => s.trim()).filter(Boolean);
     } else if (step === 5) {
@@ -565,6 +631,9 @@ const AuthGate = (() => {
     }
     if (step === 2 && !draft.workModes.length) {
       return 'Pick at least one work mode';
+    }
+    if (step === 2 && !draft.timeCommitment) {
+      return 'Pick how much time you can invest in job hunting';
     }
     if (step === 3) {
       const hasEdu = (draft.education || []).some(e => e.degree || e.institution || e.field);
@@ -593,7 +662,7 @@ const AuthGate = (() => {
     clearObError();
 
     const btn = document.getElementById('obNext');
-    const wasLabel = step === 5 ? 'Finish & start hunting' : 'Continue →';
+    const wasLabel = step === 5 ? 'Finish & start hunting' : 'Continue';
 
     if (step < 5) {
       if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -698,7 +767,7 @@ const AuthGate = (() => {
   }
 
   function getProfileFormOptions() {
-    return { employmentTypes: EMPLOYMENT_OPTIONS, workModes: WORK_MODE_OPTIONS };
+    return { employmentTypes: EMPLOYMENT_OPTIONS, workModes: WORK_MODE_OPTIONS, timeCommitment: TIME_COMMITMENT_OPTIONS };
   }
 
   return {

@@ -222,7 +222,7 @@ const App = (() => {
     const btn = document.getElementById('mapModeBtn');
     if (!btn) return;
     const dark = AreaHuntMap.getMode() === 'dark';
-    btn.textContent = dark ? '☀️' : '🌙';
+    btn.innerHTML = `<svg class="ui-icon no-gap" width="15" height="15"><use href="#icon-${dark ? 'sun' : 'moon'}"></use></svg>`;
     btn.title = dark ? 'Switch to light map' : 'Switch to dark map';
     btn.setAttribute('aria-label', btn.title);
   }
@@ -324,19 +324,27 @@ const App = (() => {
     return sel;
   }
 
-  function renderProfileChipGroup(containerId, options, selected, { exclusiveAll } = {}) {
+  function renderProfileChipGroup(containerId, options, selected, { exclusiveAll, exclusiveSingle } = {}) {
     const el = document.getElementById(containerId);
     if (!el) return;
     const sel = new Set(selected?.length ? selected : []);
     if (!sel.size && exclusiveAll) sel.add('all');
     el.innerHTML = options.map(o => {
       const id = o.id;
-      const label = o.emoji && o.label ? `${o.emoji} ${o.label}` : (o.label || id);
-      return `<button type="button" class="chip-opt ${sel.has(id) ? 'on' : ''}" data-id="${id}">${escapeHtml(label)}</button>`;
+      const text = escapeHtml(o.label || id);
+      const icon = o.icon && typeof AreaHuntIndustries !== 'undefined' ? AreaHuntIndustries.iconSvg(o.icon, 15) : '';
+      const label = icon ? `<span class="chip-opt-label">${icon}<span>${text}</span></span>` : text;
+      return `<button type="button" class="chip-opt ${sel.has(id) ? 'on' : ''}" data-id="${id}">${label}</button>`;
     }).join('');
     el.querySelectorAll('.chip-opt').forEach(btn => {
       btn.onclick = () => {
         const id = btn.dataset.id;
+        if (exclusiveSingle) {
+          const wasOn = btn.classList.contains('on');
+          el.querySelectorAll('.chip-opt').forEach(b => b.classList.remove('on'));
+          if (!wasOn) btn.classList.add('on');
+          return;
+        }
         if (exclusiveAll && id === 'all') {
           el.querySelectorAll('.chip-opt').forEach(b => b.classList.remove('on'));
           btn.classList.add('on');
@@ -356,7 +364,7 @@ const App = (() => {
     const opts = AreaHuntIndustries.OPTIONS.map(o => ({
       id: o.id,
       label: o.id === 'all' ? 'All' : o.label,
-      emoji: o.emoji,
+      icon: o.icon,
     }));
     renderProfileChipGroup('profIndustries', opts, selected, { exclusiveAll: true });
   }
@@ -390,6 +398,35 @@ const App = (() => {
     return out;
   }
 
+  function renderProfileCertifications(certifications = []) {
+    const list = document.getElementById('profCertList');
+    if (!list) return;
+    const rows = certifications.length ? certifications : [{ name: '', issuer: '', year: '', url: '' }];
+    list.innerHTML = rows.map((cert, idx) => `
+      <div class="prof-cert-row" data-idx="${idx}">
+        <input class="form-input" placeholder="Certification (e.g. Adobe Certified Expert)" data-field="name" value="${escapeAttr(cert.name || '')}" />
+        <input class="form-input" placeholder="Issuing body" data-field="issuer" value="${escapeAttr(cert.issuer || '')}" />
+        <input class="form-input" placeholder="Year" data-field="year" value="${escapeAttr(cert.year || '')}" />
+        <input class="form-input" placeholder="Credential URL (optional)" data-field="url" value="${escapeAttr(cert.url || '')}" />
+        ${idx > 0 ? '<button type="button" class="link-btn-small prof-remove-cert">Remove</button>' : ''}
+      </div>`).join('');
+    list.querySelectorAll('.prof-remove-cert').forEach(btn => {
+      btn.onclick = () => btn.closest('.prof-cert-row')?.remove();
+    });
+  }
+
+  function collectProfileCertifications() {
+    const out = [];
+    document.querySelectorAll('.prof-cert-row').forEach(row => {
+      const entry = {};
+      row.querySelectorAll('[data-field]').forEach(inp => {
+        entry[inp.dataset.field] = inp.value.trim();
+      });
+      if (entry.name || entry.issuer) out.push(entry);
+    });
+    return out;
+  }
+
   function populateProfileForm(p) {
     document.getElementById('profName').value = p.name || '';
     document.getElementById('profCity').value = p.city || '';
@@ -404,11 +441,20 @@ const App = (() => {
     document.getElementById('profExpYears').value = p.experienceYears || '';
     document.getElementById('profCurrentRole').value = p.currentRole || '';
     document.getElementById('profExpSummary').value = p.experienceSummary || '';
-    document.getElementById('profQuals').value = (p.qualifications || []).join(', ');
+    renderProfileCertifications(p.certifications || []);
+    const addCert = document.getElementById('profAddCert');
+    if (addCert) {
+      addCert.onclick = () => {
+        const certs = collectProfileCertifications();
+        certs.push({ name: '', issuer: '', year: '', url: '' });
+        renderProfileCertifications(certs);
+      };
+    }
     renderProfileIndustryChips(p.jobSectors || []);
     const formOpts = AuthGate.getProfileFormOptions?.() || {};
     renderProfileChipGroup('profEmployment', formOpts.employmentTypes || [], p.employmentTypes || []);
     renderProfileChipGroup('profWorkMode', formOpts.workModes || [], p.workModes || []);
+    renderProfileChipGroup('profTimeCommitment', formOpts.timeCommitment || [], p.timeCommitment ? [p.timeCommitment] : [], { exclusiveSingle: true });
     renderProfileEducation(p.education || []);
     const addEdu = document.getElementById('profAddEdu');
     if (addEdu) {
@@ -423,7 +469,6 @@ const App = (() => {
   function collectProfileForm(base = {}) {
     const portfolioVal = document.getElementById('profPortfolio').value.trim();
     const skills = document.getElementById('profSkills').value.split(',').map(s => s.trim()).filter(Boolean);
-    const quals = document.getElementById('profQuals').value.split(',').map(s => s.trim()).filter(Boolean);
     const jobSectors = readProfileChipSelection('profIndustries');
     const name = document.getElementById('profName').value.trim();
     return {
@@ -434,11 +479,12 @@ const App = (() => {
       jobSectors: jobSectors.length ? jobSectors : ['all'],
       employmentTypes: readProfileChipSelection('profEmployment'),
       workModes: readProfileChipSelection('profWorkMode'),
+      timeCommitment: readProfileChipSelection('profTimeCommitment')[0] || '',
       education: collectProfileEducation(),
       experienceYears: document.getElementById('profExpYears').value || '',
       currentRole: document.getElementById('profCurrentRole').value.trim(),
       experienceSummary: document.getElementById('profExpSummary').value.trim(),
-      qualifications: quals,
+      certifications: collectProfileCertifications(),
       skills,
       portfolio: portfolioVal,
       portfolioUrl: portfolioVal,
@@ -542,7 +588,9 @@ const App = (() => {
     state.isDrawing = !state.isDrawing;
     const btn = document.getElementById('drawBtn');
     btn.classList.toggle('active', state.isDrawing);
-    btn.textContent = state.isDrawing ? '✕ Cancel draw' : '✦ Draw area';
+    btn.innerHTML = state.isDrawing
+      ? '<svg class="ui-icon" width="13" height="13"><use href="#icon-close"></use></svg>Cancel draw'
+      : '<svg class="ui-icon" width="13" height="13"><use href="#icon-draw-area"></use></svg>Draw area';
     document.querySelector('.map-panel').classList.toggle('draw-mode', state.isDrawing);
     document.getElementById('mapHint').innerHTML = state.isDrawing
       ? '<strong>Draw mode on</strong> — click and drag to select area'
@@ -644,11 +692,11 @@ const App = (() => {
     const isDone = state.savedAreas.some(a => a.status === 'done' && boundsOverlap(bbox, a, 0.5));
     const isSaved = state.savedAreas.some(a => a.status === 'saved' && boundsOverlap(bbox, a, 0.5));
     if (doneBtn) {
-      doneBtn.textContent = isDone ? '✓ Done' : '✓ Mark done';
+      doneBtn.innerHTML = `<svg class="ui-icon" width="12" height="12"><use href="#icon-check"></use></svg>${isDone ? 'Done' : 'Mark done'}`;
       doneBtn.disabled = isDone;
     }
     if (saveBtn) {
-      saveBtn.textContent = isSaved ? '🔖 Saved' : '🔖 Save area';
+      saveBtn.innerHTML = `<svg class="ui-icon" width="12" height="12"><use href="#icon-bookmark"></use></svg>${isSaved ? 'Saved' : 'Save area'}`;
       saveBtn.disabled = isSaved;
     }
   }
@@ -746,7 +794,7 @@ const App = (() => {
       toast('Scan failed: ' + err.message, 'error');
     } finally {
       bar.remove();
-      btn.textContent = '⚡ Scan companies';
+      btn.innerHTML = '<svg class="ui-icon" width="13" height="13"><use href="#icon-lightning"></use></svg>Scan companies';
       btn.disabled = false;
       btn.style.display = 'none';
       progress.classList.remove('show');
@@ -795,15 +843,15 @@ const App = (() => {
             ${co}
           </div>
           <div class="area-job-meta">
-            ${j.location ? `<span>📍 ${escapeHtml(j.location)}</span>` : ''}
-            ${j.remote ? `<span class="remote">🌐 Remote</span>` : ''}
+            ${j.location ? `<span>${ic('pin', 12)}${escapeHtml(j.location)}</span>` : ''}
+            ${j.remote ? `<span class="remote">${ic('globe', 12)}Remote</span>` : ''}
             <span class="trust-badge board">${escapeHtml(src)}</span>
           </div>
         </a>`;
     }).join('');
     return `
       <details class="area-jobs-banner" open>
-        <summary>📋 ${state.areaJobs.length} extra roles on job boards${state.areaJobsSuburb ? ` · ${escapeHtml(state.areaJobsSuburb)}` : ''} <span class="area-jobs-hint">(employers not necessarily on the map)</span></summary>
+        <summary>${ic('admin', 13)}${state.areaJobs.length} extra roles on job boards${state.areaJobsSuburb ? ` · ${escapeHtml(state.areaJobsSuburb)}` : ''} <span class="area-jobs-hint">(employers not necessarily on the map)</span></summary>
         <div class="area-jobs-list">${rows}</div>
       </details>`;
   }
@@ -882,9 +930,9 @@ const App = (() => {
   function emailTrustNote(c) {
     if (!c.email) return '';
     if (isVerifiedEmail(c)) {
-      if (c.email_source === 'careers_prefix') return '✓ Verified careers email on their domain';
-      if (c.email_source === 'contact_page') return '✓ Contact email on their website';
-      return '✓ Email matches their website domain';
+      if (c.email_source === 'careers_prefix') return `${ic('check')}Verified careers email on their domain`;
+      if (c.email_source === 'contact_page') return `${ic('check')}Contact email on their website`;
+      return `${ic('check')}Email matches their website domain`;
     }
     return 'Unverified address — confirm on their site before emailing';
   }
@@ -910,7 +958,7 @@ const App = (() => {
 
   function buildTrustBanner(c) {
     if (c.enrich_error) {
-      return `<div class="trust-banner warn">⚠ ${escapeHtml(c.enrich_error)} — data may be incomplete. <button class="link-btn-small" onclick="App.reVerifyCompany('${escapeAttr(c.id)}')">Try again</button></div>`;
+      return `<div class="trust-banner warn">${ic('warning')}${escapeHtml(c.enrich_error)} — data may be incomplete. <button class="link-btn-small" onclick="App.reVerifyCompany('${escapeAttr(c.id)}')">Try again</button></div>`;
     }
     const trust = c.profile?.trust;
     if (trust?.summary) {
@@ -930,7 +978,7 @@ const App = (() => {
   function jobTrustLabel(source, job) {
     const conf = job?.confidence || null;
     if (conf === 'verified' || ['greenhouse', 'lever', 'workable', 'ashby', 'json-ld', 'jobadder'].includes(source)) {
-      return '<span class="trust-badge verified">✓ Verified listing</span>';
+      return `<span class="trust-badge verified">${ic('check')}Verified listing</span>`;
     }
     if (conf === 'board' || ['seek', 'indeed', 'linkedin-jobs', 'jora'].includes(source)) {
       const label = { seek: 'Seek', indeed: 'Indeed', 'linkedin-jobs': 'LinkedIn Jobs', jora: 'Jora' }[source] || source;
@@ -1071,7 +1119,7 @@ const App = (() => {
       state.pipelineKind = kind;
       renderPipelineList();
     } catch {
-      listEl.innerHTML = '<div class="empty-state"><div class="big-icon">⚠</div><h3>Could not load</h3><p>Check your connection and try again.</p></div>';
+      listEl.innerHTML = `<div class="empty-state"><div class="big-icon">${ic('warning', 40, false)}</div><h3>Could not load</h3><p>Check your connection and try again.</p></div>`;
     }
   }
 
@@ -1082,13 +1130,13 @@ const App = (() => {
     const all = state.pipelineCompanies || [];
     if (!all.length) {
       const label = kind === 'interested' ? 'saved' : 'applied';
-      listEl.innerHTML = `<div class="empty-state"><div class="big-icon">${kind === 'interested' ? '💜' : '✓'}</div><h3>No ${label} companies yet</h3><p>Mark companies from your scan results — they appear here across all areas.</p></div>`;
+      listEl.innerHTML = `<div class="empty-state"><div class="big-icon">${ic(kind === 'interested' ? 'nonprofit' : 'check', 40, false)}</div><h3>No ${label} companies yet</h3><p>Mark companies from your scan results — they appear here across all areas.</p></div>`;
       return;
     }
     const q = (state.pipelineSearch || '').trim();
     const filtered = q ? all.filter(c => companyMatchesSearch(c, q)) : all;
     if (!filtered.length) {
-      listEl.innerHTML = `<div class="empty-state"><div class="big-icon">🔍</div><h3>No matches</h3><p>No saved companies match “${escapeHtml(q)}”.</p></div>`;
+      listEl.innerHTML = `<div class="empty-state"><div class="big-icon">${ic('search', 40, false)}</div><h3>No matches</h3><p>No saved companies match “${escapeHtml(q)}”.</p></div>`;
       return;
     }
     const sorted = sortCompanies(filtered, state.pipelineSort, all);
@@ -1117,14 +1165,14 @@ const App = (() => {
     const areaJobsHTML = renderAreaJobsBanner();
 
     if (state.companies.length === 0) {
-      list.innerHTML = areaJobsHTML || `<div class="empty-state"><div class="big-icon">🗺</div><h3>No area scanned yet</h3><p>Click <strong>Draw area</strong> and drag a rectangle on the map.</p></div>`;
+      list.innerHTML = areaJobsHTML || `<div class="empty-state"><div class="big-icon">${ic('draw-area', 40, false)}</div><h3>No area scanned yet</h3><p>Click <strong>Draw area</strong> and drag a rectangle on the map.</p></div>`;
       return;
     }
     if (filtered.length === 0) {
       const searching = state.search.trim() || Object.values(state.quickFilters).some(Boolean);
       const body = searching
-        ? `<div class="empty-state"><div class="big-icon">🔍</div><h3>No matches</h3><p>Nothing fits your search and filters. <button class="link-btn-small" onclick="App.resetListControls()">Reset filters</button></p></div>`
-        : `<div class="empty-state"><div class="big-icon">🔍</div><h3>No matches</h3><p>Try a different industry filter or scan a larger area.</p></div>`;
+        ? `<div class="empty-state"><div class="big-icon">${ic('search', 40, false)}</div><h3>No matches</h3><p>Nothing fits your search and filters. <button class="link-btn-small" onclick="App.resetListControls()">Reset filters</button></p></div>`
+        : `<div class="empty-state"><div class="big-icon">${ic('search', 40, false)}</div><h3>No matches</h3><p>Try a different industry filter or scan a larger area.</p></div>`;
       list.innerHTML = areaJobsHTML + body;
       return;
     }
@@ -1182,20 +1230,20 @@ const App = (() => {
     // tight when enrichment hasn't finished yet.
     const chips = [];
     if (c.email && isVerifiedEmail(c)) {
-      chips.push(`<a class="contact-chip email verified" href="mailto:${escapeAttr(c.email)}" onclick="event.stopPropagation()" title="${escapeAttr(c.email)}">✉ ${escapeHtml(shortEmail(c.email))}</a>`);
+      chips.push(`<a class="contact-chip email verified" href="mailto:${escapeAttr(c.email)}" onclick="event.stopPropagation()" title="${escapeAttr(c.email)}">${ic('email', 12)}${escapeHtml(shortEmail(c.email))}</a>`);
     } else if (c.email) {
-      chips.push(`<span class="contact-chip email unverified" title="Unverified — confirm before emailing">✉ ${escapeHtml(shortEmail(c.email))} ?</span>`);
+      chips.push(`<span class="contact-chip email unverified" title="Unverified — confirm before emailing">${ic('email', 12)}${escapeHtml(shortEmail(c.email))} ?</span>`);
     }
     if (c.website) {
       const host = hostnameOf(c.website);
-      chips.push(`<a class="contact-chip site" href="${escapeAttr(c.website)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${escapeAttr(c.website)}">🌐 ${escapeHtml(host)}</a>`);
+      chips.push(`<a class="contact-chip site" href="${escapeAttr(c.website)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${escapeAttr(c.website)}">${ic('globe', 12)}${escapeHtml(host)}</a>`);
     }
     if (totalJobs) {
-      chips.push(`<span class="contact-chip jobs">💼 ${totalJobs} role${totalJobs !== 1 ? 's' : ''}</span>`);
+      chips.push(`<span class="contact-chip jobs">${ic('briefcase', 12)}${totalJobs} role${totalJobs !== 1 ? 's' : ''}</span>`);
     }
     const team = c.team || [];
     if (team.length) {
-      chips.push(`<span class="contact-chip team">👥 ${team.length} team</span>`);
+      chips.push(`<span class="contact-chip team">${ic('hr', 12)}${team.length} team</span>`);
     }
     const chipsHTML = chips.length ? `<div class="card-chips">${chips.join('')}</div>` : '';
 
@@ -1209,7 +1257,7 @@ const App = (() => {
       const extra = team.length - show.length;
       return `<div class="card-team-preview">${show.map(m =>
         isVerifiedLinkedIn(m)
-          ? `<a class="team-mini verified" href="${escapeAttr(m.linkedin_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${escapeAttr(m.title || m.name)}">${escapeHtml(m.name.split(' ')[0])} ↗</a>`
+          ? `<a class="team-mini verified" href="${escapeAttr(m.linkedin_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${escapeAttr(m.title || m.name)}">${escapeHtml(m.name.split(' ')[0])} ${ic('external-link', 10, false)}</a>`
           : `<span class="team-mini" title="Search LinkedIn for ${escapeAttr(m.name)}">${escapeHtml(m.name.split(' ')[0])}</span>`
       ).join('')}${extra ? `<span class="team-mini-more">+${extra} more</span>` : ''}</div>`;
     })() : '';
@@ -1230,15 +1278,15 @@ const App = (() => {
     const cid = escapeAttr(c.id);
     const logo = faviconHtml(c, 36);
     const matchBadge = matchCount > 0
-      ? `<span class="match-pill" title="${matchCount} of your skills match likely opportunities">🎯 Match</span>` : '';
+      ? `<span class="match-pill" title="${matchCount} of your skills match likely opportunities">${ic('logo', 11)}Match</span>` : '';
     const verifiedBadge = companyIsVerified(c)
-      ? `<span class="verified-pill" title="Verified data — sourced from their own website / ATS">✓ Verified</span>` : '';
+      ? `<span class="verified-pill" title="Verified data — sourced from their own website / ATS">${ic('check', 11)}Verified</span>` : '';
     const learnedScore = c.profile?.learned_score || 0;
     const learnedBadge = learnedScore > 0.3
-      ? `<span class="learned-pill" title="Based on companies you've saved/applied to before">✨ Recommended</span>` : '';
+      ? `<span class="learned-pill" title="Based on companies you've saved/applied to before">${ic('sparkles', 11)}Recommended</span>` : '';
     const suspiciousCount = c.profile?.suspicious_job_count || 0;
     const suspiciousBadge = suspiciousCount > 0
-      ? `<span class="suspicious-pill" title="${suspiciousCount} job posting${suspiciousCount !== 1 ? 's' : ''} here has red flags — check before applying">⚠ Check listing${suspiciousCount !== 1 ? 's' : ''}</span>` : '';
+      ? `<span class="suspicious-pill" title="${suspiciousCount} job posting${suspiciousCount !== 1 ? 's' : ''} here has red flags — check before applying">${ic('warning', 11)}Check listing${suspiciousCount !== 1 ? 's' : ''}</span>` : '';
 
     return `
       <div class="company-card ${isApplied ? 'applied' : ''} ${isSkipped ? 'skipped' : ''} ${!isApplied && verifiedBadge ? 'is-verified' : ''} ${String(state.selectedId) === String(c.id) ? 'selected' : ''}" data-id="${cid}">
@@ -1247,7 +1295,7 @@ const App = (() => {
           <div class="card-info">
             <div class="company-name-row">
               <span class="company-name">${escapeHtml(c.name)}</span>
-              ${isApplied ? '<span class="applied-tick" title="Applied">✓</span>' : ''}
+              ${isApplied ? `<span class="applied-tick" title="Applied">${ic('check', 11, false)}</span>` : ''}
               ${verifiedBadge}
               ${matchBadge}
               ${learnedBadge}
@@ -1263,12 +1311,12 @@ const App = (() => {
         ${enrichingHint}
         <div class="card-actions">
           <button class="action-btn ${c.status === 'applied' ? 'applied' : ''}" onclick="event.stopPropagation();App.toggleStatus('${cid}', 'applied')">
-            ${c.status === 'applied' ? '✓ Applied' : '✉ Applied'}
+            ${c.status === 'applied' ? `${ic('check', 12)}Applied` : `${ic('email', 12)}Applied`}
           </button>
-          <button class="action-btn ${c.status === 'interested' ? 'applied' : ''}" onclick="event.stopPropagation();App.toggleStatus('${cid}', 'interested')">
-            ${c.status === 'interested' ? '♥ Saved' : '♡ Save'}
+          <button class="action-btn heart-btn ${c.status === 'interested' ? 'applied' : ''}" onclick="event.stopPropagation();App.toggleStatus('${cid}', 'interested')">
+            ${ic('nonprofit', 12)}${c.status === 'interested' ? 'Saved' : 'Save'}
           </button>
-          <button class="action-btn skip" onclick="event.stopPropagation();App.toggleStatus('${cid}', 'skipped')" ${c.status === 'skipped' ? 'style="color:var(--red);border-color:var(--red)"' : ''}>✕</button>
+          <button class="action-btn skip" onclick="event.stopPropagation();App.toggleStatus('${cid}', 'skipped')" ${c.status === 'skipped' ? 'style="color:var(--red);border-color:var(--red)"' : ''}>${ic('close', 12, false)}</button>
         </div>
       </div>`;
   }
@@ -1314,7 +1362,7 @@ const App = (() => {
   }
 
   function initial(name) {
-    if (!name) return '🏢';
+    if (!name) return ic('building', 16, false);
     return escapeHtml(name.trim().charAt(0).toUpperCase());
   }
 
@@ -1381,12 +1429,12 @@ const App = (() => {
     const searchUrl = member.linkedin_search_url || linkedinSearchUrl(member.name, c.name, c.address);
     const linkLabel = verified
       ? (member.linkedin_source === 'website'
-        ? `<a class="li-found" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">✓ LinkedIn (from their website) ↗</a>`
+        ? `<a class="li-found" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${ic('check')}LinkedIn (from their website) ${ic('external-link', 11, false)}</a>`
         : member.linkedin_source === 'linkedin_company'
-          ? `<a class="li-found" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">✓ Verified on company LinkedIn ↗</a>`
-          : `<a class="li-found" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">✓ Verified profile ↗</a>`)
+          ? `<a class="li-found" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${ic('check')}Verified on company LinkedIn ${ic('external-link', 11, false)}</a>`
+          : `<a class="li-found" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${ic('check')}Verified profile ${ic('external-link', 11, false)}</a>`)
       : `<span class="li-none">No verified LinkedIn</span>
-         <a class="li-search-btn" href="${escapeAttr(searchUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Search LinkedIn ↗</a>`;
+         <a class="li-search-btn" href="${escapeAttr(searchUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Search LinkedIn ${ic('external-link', 11, false)}</a>`;
     const bioHTML = member.bio
       ? `<div class="team-bio">${escapeHtml(member.bio.slice(0, 140))}${member.bio.length > 140 ? '…' : ''}</div>`
       : '';
@@ -1414,8 +1462,8 @@ const App = (() => {
     const li = c.profile?.linkedin || {};
     const peopleSearch = linkedinPeopleSearchUrl(c);
     const verifiedBlock = li.verified && li.company_url
-      ? `<a class="linkedin-verified-link" href="${escapeAttr(li.company_url)}" target="_blank" rel="noopener">✓ ${escapeHtml(li.status_label)} ↗</a>
-         ${li.people_url ? `<a class="mini-btn mini-btn-link" href="${escapeAttr(li.people_url)}" target="_blank" rel="noopener">Browse employees on LinkedIn ↗</a>` : ''}`
+      ? `<a class="linkedin-verified-link" href="${escapeAttr(li.company_url)}" target="_blank" rel="noopener">${ic('check')}${escapeHtml(li.status_label)} ${ic('external-link', 11, false)}</a>
+         ${li.people_url ? `<a class="mini-btn mini-btn-link" href="${escapeAttr(li.people_url)}" target="_blank" rel="noopener">Browse employees on LinkedIn ${ic('external-link', 11, false)}</a>` : ''}`
       : `<div class="linkedin-none-badge">${escapeHtml(li.status_label || 'No verified LinkedIn found')}</div>
          <div class="section-note">${escapeHtml(li.message || 'We only show a direct company LinkedIn link when it appears on their website.')}</div>`;
   return `
@@ -1423,7 +1471,7 @@ const App = (() => {
         <div class="detail-label">LinkedIn</div>
         ${verifiedBlock}
         <div class="linkedin-search-row">
-          <a class="mini-btn mini-btn-link" href="${escapeAttr(peopleSearch)}" target="_blank" rel="noopener">Search people at ${escapeHtml(c.name)} on LinkedIn ↗</a>
+          <a class="mini-btn mini-btn-link" href="${escapeAttr(peopleSearch)}" target="_blank" rel="noopener">Search people at ${escapeHtml(c.name)} on LinkedIn ${ic('external-link', 11, false)}</a>
         </div>
       </div>`;
   }
@@ -1432,11 +1480,12 @@ const App = (() => {
     const links = c.profile?.links || [];
     if (!links.length) return '';
     const icons = {
-      website: '🌐', careers: '💼', linkedin_company: '💼',
-      instagram: '📷', facebook: '👍', twitter: '𝕏', youtube: '▶', tiktok: '🎵',
+      website: 'globe', careers: 'briefcase', linkedin_company: 'briefcase',
+      instagram: 'creative', facebook: 'thumb', tiktok: 'music-note',
     };
+    const textIcons = { twitter: '𝕏', youtube: '▶' };
     const chips = links.map(l =>
-      `<a class="company-link-chip ${l.verified ? 'verified' : ''}" href="${escapeAttr(l.url)}" target="_blank" rel="noopener">${icons[l.kind] || '🔗'} ${escapeHtml(l.label)} ↗</a>`,
+      `<a class="company-link-chip ${l.verified ? 'verified' : ''}" href="${escapeAttr(l.url)}" target="_blank" rel="noopener">${icons[l.kind] ? ic(icons[l.kind]) : (textIcons[l.kind] || ic('link-chain'))}${escapeHtml(l.label)} ${ic('external-link', 11)}</a>`,
     ).join('');
     return `
       <div class="detail-section">
@@ -1450,10 +1499,10 @@ const App = (() => {
     const peopleSearch = linkedinPeopleSearchUrl(c);
     return `
       <div class="team-empty-actions">
-        <button class="mini-btn" onclick="App.discoverPeople('${escapeAttr(c.id)}')">🔍 Find people on LinkedIn</button>
+        <button class="mini-btn" onclick="App.discoverPeople('${escapeAttr(c.id)}')">${ic('search', 12)}Find people on LinkedIn</button>
         ${coPeople
-          ? `<a class="mini-btn mini-btn-link" href="${escapeAttr(coPeople)}" target="_blank" rel="noopener">👥 All employees on LinkedIn ↗</a>`
-          : `<a class="mini-btn mini-btn-link" href="${escapeAttr(peopleSearch)}" target="_blank" rel="noopener">👥 Search people on LinkedIn ↗</a>`}
+          ? `<a class="mini-btn mini-btn-link" href="${escapeAttr(coPeople)}" target="_blank" rel="noopener">${ic('hr', 12)}All employees on LinkedIn ${ic('external-link', 11, false)}</a>`
+          : `<a class="mini-btn mini-btn-link" href="${escapeAttr(peopleSearch)}" target="_blank" rel="noopener">${ic('hr', 12)}Search people on LinkedIn ${ic('external-link', 11, false)}</a>`}
       </div>`;
   }
 
@@ -1491,13 +1540,13 @@ const App = (() => {
       <div class="detail-section">
         <div class="detail-label">
           <span>People at ${escapeHtml(c.name)} (${team.length})</span>
-          <button class="link-btn-small" onclick="App.discoverPeople('${escapeAttr(c.id)}')">↻ Re-verify LinkedIn</button>
+          <button class="link-btn-small" onclick="App.discoverPeople('${escapeAttr(c.id)}')">${ic('refresh', 11)}Re-verify LinkedIn</button>
         </div>
         ${note}
         <div class="team-grid" id="teamGrid-${escapeAttr(c.id)}">
           ${team.map(m => renderTeamCard(c, m)).join('')}
         </div>
-        ${coPeople ? `<a class="team-all-li" href="${escapeAttr(coPeople)}" target="_blank" rel="noopener">Browse all employees on LinkedIn company page ↗</a>` : ''}
+        ${coPeople ? `<a class="team-all-li" href="${escapeAttr(coPeople)}" target="_blank" rel="noopener">Browse all employees on LinkedIn company page ${ic('external-link', 11, false)}</a>` : ''}
       </div>`;
   }
 
@@ -1506,7 +1555,7 @@ const App = (() => {
     const jobsHTML = jobs.length
       ? jobs.map(renderJobRow).join('')
       : `<div class="empty-hint">${c.careers_url
-          ? `No open roles detected on their careers page yet. <a href="${escapeAttr(c.careers_url)}" target="_blank" rel="noopener">Open careers page ↗</a> or try ↻ Scan jobs.`
+          ? `No open roles detected on their careers page yet. <a href="${escapeAttr(c.careers_url)}" target="_blank" rel="noopener">Open careers page ${ic('external-link', 11, false)}</a> or try ${ic('refresh', 11, false)} Scan jobs.`
           : c.enriched_at
             ? (state.hasSerperKey
               ? 'No roles on their website yet. Scan jobs checks careers page first, then Seek/Indeed only as fallback.'
@@ -1516,7 +1565,7 @@ const App = (() => {
       <div class="detail-section jobs-section">
         <div class="detail-label">
           <span>Careers &amp; open roles (${jobs.length})</span>
-          <button class="mini-btn" onclick="App.refreshJobs('${c.id}')">↻ Scan jobs</button>
+          <button class="mini-btn" onclick="App.refreshJobs('${c.id}')">${ic('refresh', 12)}Scan jobs</button>
         </div>
         ${jobsHTML}
       </div>`;
@@ -1543,7 +1592,7 @@ const App = (() => {
           <li><span class="ds-dot"></span> Looking up social profiles</li>
           <li><span class="ds-dot"></span> Scanning website + job boards for open roles</li>
         </ul>
-        <a class="deep-scan-link" href="${escapeAttr(c.website)}" target="_blank" rel="noopener">Open website in new tab →</a>
+        <a class="deep-scan-link" href="${escapeAttr(c.website)}" target="_blank" rel="noopener">Open website in new tab ${ic('chevron-right', 12, false)}</a>
       </div>
     `;
   }
@@ -1628,17 +1677,17 @@ const App = (() => {
 
   function renderJobRow(j) {
     const meta = [];
-    if (j.job_type)     meta.push(`<span>💼 ${escapeHtml(j.job_type)}</span>`);
-    if (j.location)     meta.push(`<span>📍 ${escapeHtml(j.location)}</span>`);
-    if (j.remote)       meta.push(`<span style="color:var(--accent2)">🌐 Remote</span>`);
-    if (j.department)   meta.push(`<span>🏷 ${escapeHtml(j.department)}</span>`);
-    if (j.salary)       meta.push(`<span>💰 ${escapeHtml(j.salary)}</span>`);
-    if (j.posted_at)    meta.push(`<span title="Posted ${new Date(j.posted_at).toLocaleDateString()}">🗓 Posted ${timeAgo(j.posted_at)}</span>`);
+    if (j.job_type)     meta.push(`<span>${ic('briefcase', 12)}${escapeHtml(j.job_type)}</span>`);
+    if (j.location)     meta.push(`<span>${ic('pin', 12)}${escapeHtml(j.location)}</span>`);
+    if (j.remote)       meta.push(`<span style="color:var(--accent2)">${ic('globe', 12)}Remote</span>`);
+    if (j.department)   meta.push(`<span>${ic('price-tag', 12)}${escapeHtml(j.department)}</span>`);
+    if (j.salary)       meta.push(`<span>${ic('dollar', 12)}${escapeHtml(j.salary)}</span>`);
+    if (j.posted_at)    meta.push(`<span title="Posted ${new Date(j.posted_at).toLocaleDateString()}">${ic('calendar', 12)}Posted ${timeAgo(j.posted_at)}</span>`);
     if (j.closes_at) {
       const days = Math.ceil((j.closes_at - Date.now()) / 86400000);
       const cls = days < 0 ? 'closed' : days <= 7 ? 'urgent' : '';
       const txt = days < 0 ? `closed ${-days}d ago` : `closes in ${days}d`;
-      meta.push(`<span class="deadline ${cls}" title="Deadline ${new Date(j.closes_at).toLocaleDateString()}">⏰ ${txt}</span>`);
+      meta.push(`<span class="deadline ${cls}" title="Deadline ${new Date(j.closes_at).toLocaleDateString()}">${ic('clock', 12)}${txt}</span>`);
     }
     if (j.source)       meta.push(`<span class="job-source">${escapeHtml(j.source)}</span>`);
     const trust = jobTrustLabel(j.source, j);
@@ -1652,7 +1701,7 @@ const App = (() => {
       : escapeHtml(j.title);
 
     const suspiciousWarning = j.looks_suspicious
-      ? `<div class="job-suspicious-warning">⚠ This posting has red flags — ${(j.quality_flags || []).map(escapeHtml).join('; ') || 'looks unusual'}. Verify carefully before applying or sharing any details.</div>`
+      ? `<div class="job-suspicious-warning">${ic('warning', 13)}This posting has red flags — ${(j.quality_flags || []).map(escapeHtml).join('; ') || 'looks unusual'}. Verify carefully before applying or sharing any details.</div>`
       : '';
 
     return `
@@ -1663,7 +1712,7 @@ const App = (() => {
           <div class="job-meta">${meta.join('')}${trust}</div>
           ${suspiciousWarning}
           ${desc}
-          ${j.url ? `<a class="job-apply-link" href="${escapeAttr(j.url)}" target="_blank" rel="noopener">Open posting →</a>` : ''}
+          ${j.url ? `<a class="job-apply-link" href="${escapeAttr(j.url)}" target="_blank" rel="noopener">Open posting ${ic('chevron-right', 12, false)}</a>` : ''}
         </div>
       </div>`;
   }
@@ -1701,7 +1750,7 @@ const App = (() => {
     if (!keys.length) return '';
     const opps = (c.opportunities || []).filter(o => oppMatchesProfile(o, keys));
     if (opps.length === 0) return '';
-    return `<div class="match-banner">🎯 <strong>Good match for your skills</strong> — likely needs ${opps.slice(0, 2).join(' / ')}.</div>`;
+    return `<div class="match-banner">${ic('logo', 14)}<strong>Good match for your skills</strong> — likely needs ${opps.slice(0, 2).join(' / ')}.</div>`;
   }
 
   // AI fit score is opt-in per company (costs a real API call) rather than
@@ -1710,7 +1759,7 @@ const App = (() => {
   function renderAiFitSection(c) {
     return `
       <div class="detail-section ai-fit-section" id="aiFitSection">
-        <div class="detail-label"><span>🤖 AI fit check</span></div>
+        <div class="detail-label"><span>${ic('ai', 13)}AI fit check</span></div>
         <button class="btn btn-outline ai-fit-btn" onclick="App.checkAiFit('${escapeAttr(c.id)}')">
           Check how well this actually fits your profile
         </button>
@@ -1721,7 +1770,7 @@ const App = (() => {
     const section = document.getElementById('aiFitSection');
     if (!section) return;
     section.innerHTML = `
-      <div class="detail-label"><span>🤖 AI fit check</span></div>
+      <div class="detail-label"><span>${ic('ai', 13)}AI fit check</span></div>
       <div class="empty-hint"><span class="inline-spinner"></span>Reading the role and your profile…</div>`;
     try {
       const resp = await fetch('/api/ai/fit-score', {
@@ -1732,20 +1781,20 @@ const App = (() => {
       const data = await resp.json();
       if (!resp.ok || !data.available) {
         section.innerHTML = `
-          <div class="detail-label"><span>🤖 AI fit check</span></div>
+          <div class="detail-label"><span>${ic('ai', 13)}AI fit check</span></div>
           <div class="empty-hint">${escapeHtml(data.message || data.error || 'Could not check fit right now.')}</div>`;
         return;
       }
       const tier = data.score >= 70 ? 'good' : data.score >= 40 ? 'ok' : 'low';
       section.innerHTML = `
-        <div class="detail-label"><span>🤖 AI fit check</span></div>
+        <div class="detail-label"><span>${ic('ai', 13)}AI fit check</span></div>
         <div class="ai-fit-result ${tier}">
           <div class="ai-fit-score">${data.score}<span>/100</span></div>
           <div class="ai-fit-reason">${escapeHtml(data.reason)}</div>
         </div>`;
     } catch (err) {
       section.innerHTML = `
-        <div class="detail-label"><span>🤖 AI fit check</span></div>
+        <div class="detail-label"><span>${ic('ai', 13)}AI fit check</span></div>
         <div class="empty-hint">Could not reach the server — try again.</div>`;
     }
   }
@@ -1845,7 +1894,7 @@ const App = (() => {
     if (!hasProfile) {
       return `<div class="outreach-no-profile">
         Set your profile to generate a personalised cold-email template for every company.
-        <br><button class="btn btn-primary" onclick="App.openProfile()">👤 Set profile</button>
+        <br><button class="btn btn-primary" onclick="App.openProfile()">${ic('person', 13)}Set profile</button>
       </div>`;
     }
 
@@ -1858,7 +1907,7 @@ const App = (() => {
 
     let toLine;
     if (verified && c.email) {
-      toLine = `<span class="email-ok">✓ ${escapeHtml(c.email)}</span>`;
+      toLine = `<span class="email-ok">${ic('check', 12)}${escapeHtml(c.email)}</span>`;
     } else if (c.email) {
       toLine = `${escapeHtml(c.email)} <span class="email-warn">(not verified)</span>`;
     } else {
@@ -1866,7 +1915,7 @@ const App = (() => {
     }
 
     const verifyBtn = hasEmail
-      ? `<button type="button" class="mini-btn" id="verifyEmailBtn-${cid}" onclick="App.verifyCompanyEmail('${cid}')">${verified ? '↻ Re-verify email' : '🔍 Verify email'}</button>`
+      ? `<button type="button" class="mini-btn" id="verifyEmailBtn-${cid}" onclick="App.verifyCompanyEmail('${cid}')">${verified ? ic('refresh', 12) + 'Re-verify email' : ic('search', 12) + 'Verify email'}</button>`
       : '';
 
     const variantCards = variants.length
@@ -1896,7 +1945,7 @@ const App = (() => {
         <div class="outreach-verify-note" id="outreachVerifyNote-${cid}"></div>
 
         <div class="outreach-ai-bar">
-          <span class="outreach-ai-title">✨ Quick creative drafts</span>
+          <span class="outreach-ai-title">${ic('sparkles', 13)}Quick creative drafts</span>
           <button type="button" class="mini-btn" id="genEmailBtn-${cid}" onclick="App.generateOutreachEmails('${cid}')">
             ${state.hasOpenAiKey ? 'Generate with AI' : 'Generate options'}
           </button>
@@ -1910,16 +1959,16 @@ const App = (() => {
         <textarea class="outreach-body" id="outreachBody-${cid}">${escapeHtml(body)}</textarea>
 
         <div class="outreach-actions">
-          <button type="button" class="btn btn-primary" onclick="App.copyOutreach('${cid}')">📋 Copy</button>
+          <button type="button" class="btn btn-primary" onclick="App.copyOutreach('${cid}')">${ic('admin', 13)}Copy</button>
           <button type="button" class="btn btn-accent-send" id="sendEmailBtn-${cid}"
             onclick="App.sendOutreachEmail('${cid}')"
             ${canSend ? '' : `disabled title="${escapeAttr(sendHint)}"`}>
-            ✉ Send email
+            ${ic('email', 13)}Send email
           </button>
           ${verified && c.email
             ? `<a class="btn btn-outline" href="mailto:${escapeAttr(c.email)}?subject=${encodeURIComponent(subject)}"
                  style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center"
-                 onclick="App.markAppliedFromLinkClick('${cid}')">↗ Mail app &amp; mark applied</a>`
+                 onclick="App.markAppliedFromLinkClick('${cid}')">${ic('external-link', 13)}Mail app &amp; mark applied</a>`
             : ''}
         </div>
         ${sendHint && !canSend ? `<div class="outreach-send-hint">${escapeHtml(sendHint)}</div>` : ''}
@@ -1927,7 +1976,7 @@ const App = (() => {
         <div class="outreach-careers-fallback">
           No verified email — apply straight through their careers page instead:
           <a class="btn btn-primary" href="${escapeAttr(c.careers_url)}" target="_blank" rel="noopener"
-             onclick="App.markAppliedFromLinkClick('${cid}')">↗ Open careers page &amp; mark applied</a>
+             onclick="App.markAppliedFromLinkClick('${cid}')">${ic('external-link', 13)}Open careers page &amp; mark applied</a>
         </div>` : ''}
       </div>`;
   }
@@ -1982,7 +2031,7 @@ const App = (() => {
         const c = state.companies.find(x => String(x.id) === String(id))
           || state.pipelineCompanies.find(x => String(x.id) === String(id));
         btn.disabled = false;
-        btn.textContent = isVerifiedEmail(c || {}) ? '↻ Re-verify email' : '🔍 Verify email';
+        btn.innerHTML = isVerifiedEmail(c || {}) ? `${ic('refresh', 12)}Re-verify email` : `${ic('search', 12)}Verify email`;
       }
     }
   }
@@ -2077,7 +2126,7 @@ const App = (() => {
     } finally {
       if (btn) {
         btn.disabled = !(isVerifiedEmail(c) && profile.senderEmail && state.hasSmtp);
-        btn.textContent = '✉ Send email';
+        btn.innerHTML = `${ic('email', 13)}Send email`;
       }
     }
   }
@@ -2095,39 +2144,39 @@ const App = (() => {
     const links = [];
     const nameQ = encodeURIComponent(c.name);
     const addrQ = encodeURIComponent([c.name, c.address].filter(Boolean).join(' '));
-    links.push({ icon: '🗺', label: 'Google Maps', url: `https://www.google.com/maps/search/?api=1&query=${addrQ}` });
-    links.push({ icon: '🚗', label: 'Directions',  url: `https://www.google.com/maps/dir/?api=1&destination=${addrQ}` });
+    links.push({ icon: 'map-nav', label: 'Google Maps', url: `https://www.google.com/maps/search/?api=1&query=${addrQ}` });
+    links.push({ icon: 'automotive', label: 'Directions',  url: `https://www.google.com/maps/dir/?api=1&destination=${addrQ}` });
     const coLi = (c.socials || {}).linkedin;
     if (coLi) {
-      links.push({ icon: '💼', label: 'LinkedIn co.', url: coLi });
+      links.push({ icon: 'briefcase', label: 'LinkedIn co.', url: coLi });
       const coPeople = linkedinCompanyPeopleUrl(c);
-      if (coPeople) links.push({ icon: '👥', label: 'Employees', url: coPeople });
+      if (coPeople) links.push({ icon: 'hr', label: 'Employees', url: coPeople });
     } else {
-      links.push({ icon: '💼', label: 'LinkedIn', url: `https://www.linkedin.com/search/results/companies/?keywords=${nameQ}` });
-      links.push({ icon: '👥', label: 'People', url: linkedinPeopleSearchUrl(c) });
+      links.push({ icon: 'briefcase', label: 'LinkedIn', url: `https://www.linkedin.com/search/results/companies/?keywords=${nameQ}` });
+      links.push({ icon: 'hr', label: 'People', url: linkedinPeopleSearchUrl(c) });
     }
-    links.push({ icon: '🔎', label: 'Google', url: `https://www.google.com/search?q=${nameQ}+careers` });
+    links.push({ icon: 'search', label: 'Google', url: `https://www.google.com/search?q=${nameQ}+careers` });
     if (c.email && isVerifiedEmail(c)) {
       const subj = encodeURIComponent(`Application — ${c.name}`);
-      links.push({ icon: '✉', label: 'Email careers', url: `mailto:${c.email}?subject=${subj}` });
+      links.push({ icon: 'email', label: 'Email careers', url: `mailto:${c.email}?subject=${subj}` });
     }
 
     const stats = [];
-    if (typeof c.rating === 'number')       stats.push(`<span>⭐ ${c.rating.toFixed(1)} (Google)</span>`);
-    if (c.address)                          stats.push(`<span>📌 ${escapeHtml(c.address)}</span>`);
+    if (typeof c.rating === 'number')       stats.push(`<span>${ic('star')}${c.rating.toFixed(1)} (Google)</span>`);
+    if (c.address)                          stats.push(`<span>${ic('pin')}${escapeHtml(c.address)}</span>`);
     if (c.enriched_at) {
-      stats.push(`<span title="${new Date(c.enriched_at).toLocaleString()}">🕒 Enriched ${timeAgo(c.enriched_at)}</span>`);
+      stats.push(`<span title="${new Date(c.enriched_at).toLocaleString()}">${ic('clock')}Enriched ${timeAgo(c.enriched_at)}</span>`);
     } else if (c.website) {
       stats.push(`<span style="color:var(--accent2);display:inline-flex;align-items:center"><span class="inline-spinner"></span>Fetching website &amp; jobs… (≈10s)</span>`);
     }
     const totalJobs   = (c.jobs || []).length;
     const appliedJobs = (c.jobs || []).filter(j => j.applied).length;
-    if (totalJobs)                          stats.push(`<span>📋 ${appliedJobs}/${totalJobs} jobs applied</span>`);
+    if (totalJobs)                          stats.push(`<span>${ic('admin')}${appliedJobs}/${totalJobs} jobs applied</span>`);
 
     return `
       <div class="explore-stats">${stats.join('')}</div>
       <div class="explore-links">
-        ${links.map(l => `<a class="explore-link" href="${escapeAttr(l.url)}" target="_blank" rel="noopener">${l.icon} ${escapeHtml(l.label)}</a>`).join('')}
+        ${links.map(l => `<a class="explore-link" href="${escapeAttr(l.url)}" target="_blank" rel="noopener">${ic(l.icon)}${escapeHtml(l.label)}</a>`).join('')}
       </div>`;
   }
 
@@ -2174,17 +2223,18 @@ const App = (() => {
 
     const trustBanner = buildTrustBanner(c);
 
+    const emailIcon = ic('email', 13, false);
     const emailRow = c.email
       ? (isVerifiedEmail(c)
-        ? `<div class="contact-row"><span class="contact-icon">✉</span><a href="mailto:${escapeAttr(c.email)}">${escapeHtml(c.email)}</a><button class="copy-btn" onclick="App.copy('${escapeAttr(c.email)}')">Copy</button></div><div class="trust-note">${escapeHtml(emailTrustNote(c))}</div>`
-        : `<div class="contact-row unverified"><span class="contact-icon">✉</span><span>${escapeHtml(c.email)}</span><button class="copy-btn" onclick="App.copy('${escapeAttr(c.email)}')">Copy</button></div><div class="trust-note warn">${escapeHtml(emailTrustNote(c))}</div>`)
-      : `<div class="contact-row missing"><span class="contact-icon">✉</span>No careers email found on their website</div>`;
+        ? `<div class="contact-row"><span class="contact-icon">${emailIcon}</span><a href="mailto:${escapeAttr(c.email)}">${escapeHtml(c.email)}</a><button class="copy-btn" onclick="App.copy('${escapeAttr(c.email)}')">Copy</button></div><div class="trust-note">${escapeHtml(emailTrustNote(c))}</div>`
+        : `<div class="contact-row unverified"><span class="contact-icon">${emailIcon}</span><span>${escapeHtml(c.email)}</span><button class="copy-btn" onclick="App.copy('${escapeAttr(c.email)}')">Copy</button></div><div class="trust-note warn">${escapeHtml(emailTrustNote(c))}</div>`)
+      : `<div class="contact-row missing"><span class="contact-icon">${emailIcon}</span>No careers email found on their website</div>`;
 
     const phoneRow = c.phone
-      ? `<div class="contact-row"><span class="contact-icon">📞</span><a href="tel:${escapeAttr(c.phone)}">${escapeHtml(c.phone)}</a><button class="copy-btn" onclick="App.copy('${escapeAttr(c.phone)}')">Copy</button></div>`
+      ? `<div class="contact-row"><span class="contact-icon">${ic('phone', 13, false)}</span><a href="tel:${escapeAttr(c.phone)}">${escapeHtml(c.phone)}</a><button class="copy-btn" onclick="App.copy('${escapeAttr(c.phone)}')">Copy</button></div>`
       : '';
 
-    const addressBit = c.address ? `<div class="contact-row"><span class="contact-icon">📌</span>${escapeHtml(c.address)}</div>` : '';
+    const addressBit = c.address ? `<div class="contact-row"><span class="contact-icon">${ic('pin', 13, false)}</span>${escapeHtml(c.address)}</div>` : '';
 
     const otherEmails = (c.all_emails || []).filter(e => isPlausibleExtraEmail(e, c));
     const otherEmailsRow = otherEmails.length ? `
@@ -2192,7 +2242,7 @@ const App = (() => {
         <div class="detail-label">Other emails found</div>
         ${otherEmails.slice(0, 8).map(e => `
           <div class="contact-row">
-            <span class="contact-icon">✉</span>
+            <span class="contact-icon">${emailIcon}</span>
             <a href="mailto:${escapeAttr(e)}">${escapeHtml(e)}</a>
             <button class="copy-btn" onclick="App.copy('${escapeAttr(e)}')">Copy</button>
           </div>`).join('')}
@@ -2201,9 +2251,11 @@ const App = (() => {
     // Social profiles — moved to Company links section when profile exists.
     const socialRow = (!c.profile?.links?.length && (c.socials && Object.keys(c.socials).length)) ? (() => {
       const socials = c.socials || {};
+      const socialIconNames = { linkedin: 'briefcase', instagram: 'creative', facebook: 'thumb', tiktok: 'music-note' };
+      const socialTextIcons = { twitter: '𝕏', youtube: '▶' };
       const socialChips = Object.entries(socials).map(([k, url]) => {
-        const icon = { linkedin: '💼', instagram: '📷', facebook: '👍', twitter: '𝕏', youtube: '▶', tiktok: '🎵' }[k] || '🔗';
-        return `<a class="social-chip" href="${escapeAttr(url)}" target="_blank" rel="noopener">${icon} ${escapeHtml(k.charAt(0).toUpperCase() + k.slice(1))}</a>`;
+        const icon = socialIconNames[k] ? ic(socialIconNames[k]) : (socialTextIcons[k] || ic('link-chain'));
+        return `<a class="social-chip" href="${escapeAttr(url)}" target="_blank" rel="noopener">${icon}${escapeHtml(k.charAt(0).toUpperCase() + k.slice(1))}</a>`;
       }).join('');
       return `
       <div class="detail-section">
@@ -2226,7 +2278,7 @@ const App = (() => {
     const teamSection = renderTeamSection(c);
     const jobsSection = renderJobsSection(c);
 
-    const stars = [1, 2, 3, 4, 5].map(i => `<span class="star ${c.user_rating >= i ? 'lit' : ''}" onclick="App.setRating('${c.id}', ${i})">★</span>`).join('');
+    const stars = [1, 2, 3, 4, 5].map(i => `<span class="star ${c.user_rating >= i ? 'lit' : ''}" onclick="App.setRating('${c.id}', ${i})">${ic('star', 15, false)}</span>`).join('');
 
     document.getElementById('detailBody').innerHTML = `
       ${trustBanner}
@@ -2236,7 +2288,7 @@ const App = (() => {
       <div class="detail-section">
         <div class="detail-label">
           <span>Contact</span>
-          ${c.website ? `<button class="mini-btn" onclick="App.reVerifyCompany('${escapeAttr(c.id)}')">↻ Re-scan website</button>` : ''}
+          ${c.website ? `<button class="mini-btn" onclick="App.reVerifyCompany('${escapeAttr(c.id)}')">${ic('refresh', 12)}Re-scan website</button>` : ''}
         </div>
         ${emailRow}
         ${phoneRow}
@@ -2259,7 +2311,7 @@ const App = (() => {
       <div class="detail-section">
         <div class="detail-label">Application status</div>
         <button class="apply-big ${c.status === 'applied' ? 'applied' : ''}" onclick="App.toggleStatus('${c.id}', 'applied')">
-          ${c.status === 'applied' ? '✓ Applied — click to undo' : 'Mark whole company as applied (manual)'}
+          ${c.status === 'applied' ? ic('check', 14) + 'Applied — click to undo' : 'Mark whole company as applied (manual)'}
         </button>
       </div>
       <div class="detail-section">
@@ -2651,8 +2703,9 @@ const App = (() => {
     if (!el || typeof AreaHuntIndustries === 'undefined') return;
     el.innerHTML = AreaHuntIndustries.OPTIONS.map(o => {
       const active = state.activeCats.includes(o.id);
-      const label = o.id === 'all' ? 'All' : `${o.emoji} ${o.label}`;
-      return `<button type="button" class="filter-tag ${active ? 'active' : ''}" data-cat="${o.id}">${label}</button>`;
+      const icon = AreaHuntIndustries.iconSvg(o.icon, 12);
+      const label = o.id === 'all' ? 'All' : escapeHtml(o.label);
+      return `<button type="button" class="filter-tag ${active ? 'active' : ''}" data-cat="${o.id}">${icon}${label}</button>`;
     }).join('');
     el.querySelectorAll('.filter-tag').forEach(btn => {
       btn.onclick = () => toggleIndustryFilter(btn.dataset.cat);
@@ -2785,6 +2838,13 @@ const App = (() => {
   }
   function escapeAttr(s) {
     return escapeHtml(s);
+  }
+
+  // Inline icon for text/badge contexts (replaces emoji) — references the
+  // sprite in index.html. `.ui-icon` adds a small right margin so it reads
+  // naturally before a text label; pass gap:false for icon-only buttons.
+  function ic(name, size = 13, gap = true) {
+    return `<svg class="ui-icon${gap ? '' : ' no-gap'}" width="${size}" height="${size}"><use href="#icon-${name}"></use></svg>`;
   }
 
   return {
