@@ -728,7 +728,12 @@ body.view-pipeline .detail-panel {
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; z-index: 1;
   background: linear-gradient(90deg, var(--accent), var(--accent2));
 }
-.modal-header { padding: 18px 20px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.modal-header { padding: 18px 20px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-shrink: 0; }
+/* .modal-body had no scroll rule of its own — it just inherited the
+   parent .modal's `overflow: hidden` + `max-height: 90vh`, so any content
+   taller than that (near-guaranteed once the profile form grew past a
+   couple screens) was silently clipped with no way to reach it at all. */
+.modal-body { overflow-y: auto; flex: 1; min-height: 0; padding: 20px; }
 .modal-profile { width: 560px; }
 .profile-section-title {
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px;
