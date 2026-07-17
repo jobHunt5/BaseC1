@@ -249,12 +249,15 @@ const AuthGate = (() => {
   function setUserChip() {
     const chip = document.getElementById('userChip');
     const signIn = document.getElementById('signInBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
     if (!session) {
       if (chip) chip.style.display = 'none';
       if (signIn) signIn.style.display = '';
+      if (logoutBtn) logoutBtn.style.display = 'none';
       return;
     }
     if (signIn) signIn.style.display = 'none';
+    if (logoutBtn) logoutBtn.style.display = '';
     if (!chip) return;
     const name = session.profile?.name || session.email?.split('@')[0] || 'User';
     chip.textContent = name;
@@ -290,6 +293,8 @@ const AuthGate = (() => {
   function renderLogin() {
     step = 0;
     renderProgress();
+    clearObError();
+    document.getElementById('authGateNav').innerHTML = '';
     document.getElementById('authGateBody').innerHTML = `
       <div class="auth-brand">
         <div class="auth-brand-mark"><svg width="22" height="22"><use href="#icon-logo"></use></svg></div>

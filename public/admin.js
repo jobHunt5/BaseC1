@@ -134,15 +134,24 @@
     panel.innerHTML = `<div class="admin-loading">Loading…</div>`;
     let stats, analytics;
     try {
-      [stats, analytics] = await Promise.all([
-        fetch('/api/admin/stats', { headers: authHeaders() }).then(r => r.json()),
-        fetch(`/api/admin/analytics?days=${overviewDays}`, { headers: authHeaders() }).then(r => r.json()),
+      const [statsResp, analyticsResp] = await Promise.all([
+        fetch('/api/admin/stats', { headers: authHeaders() }),
+        fetch(`/api/admin/analytics?days=${overviewDays}`, { headers: authHeaders() }),
       ]);
-    } catch {
-      panel.innerHTML = `<div class="admin-loading">Could not reach the server.</div>`;
+      if (statsResp.status === 401 || analyticsResp.status === 401) { clearToken(); showLogin(); return; }
+      if (!statsResp.ok) throw new Error(`/api/admin/stats -> ${statsResp.status}`);
+      if (!analyticsResp.ok) throw new Error(`/api/admin/analytics -> ${analyticsResp.status}`);
+      [stats, analytics] = await Promise.all([statsResp.json(), analyticsResp.json()]);
+    } catch (err) {
+      panel.innerHTML = `<div class="admin-loading">Could not load the dashboard (${escapeHtml(err.message)}). <button type="button" class="admin-btn admin-btn-outline" onclick="AdminApp.switchTab('overview')">Retry</button></div>`;
       return;
     }
-    renderOverview(stats, analytics);
+    try {
+      renderOverview(stats, analytics);
+    } catch (err) {
+      panel.innerHTML = `<div class="admin-loading">Dashboard render error: ${escapeHtml(err.message)}</div>`;
+      console.error(err);
+    }
   }
 
   function renderOverview(stats, analytics) {

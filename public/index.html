@@ -181,6 +181,9 @@
     <symbol id="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
       <line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/>
     </symbol>
+    <symbol id="icon-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><polyline points="10 8 14 12 10 16"/><line x1="14" y1="12" x2="3" y2="12"/>
+    </symbol>
     <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
       <polyline points="4 12 9 17 20 6"/>
     </symbol>
@@ -291,6 +294,7 @@
   <div class="topbar-account">
     <button class="btn btn-outline" id="profileBtn" onclick="App.openProfile()"><svg class="ui-icon" width="13" height="13"><use href="#icon-person"></use></svg>Profile</button>
     <button class="btn btn-outline user-chip" id="userChip" onclick="App.openProfile()" style="display:none" title="Your profile"></button>
+    <button class="btn btn-outline icon-only" id="logoutBtn" onclick="App.logout()" style="display:none" title="Sign out" aria-label="Sign out"><svg class="ui-icon no-gap" width="14" height="14"><use href="#icon-logout"></use></svg></button>
     <button class="btn btn-primary" id="signInBtn" onclick="AuthGate.showLogin()" style="display:none">Sign in</button>
   </div>
 </div>
