@@ -1589,15 +1589,25 @@ const App = (() => {
     const host = hostnameOf(c.website);
     return `
       <div class="deep-scan">
-        <div class="deep-scan-spinner"></div>
-        <div class="deep-scan-title">Deep-scanning <strong>${escapeHtml(host)}</strong></div>
+        <div class="deep-scan-radar">
+          <div class="radar-ring radar-ring-1"></div>
+          <div class="radar-ring radar-ring-2"></div>
+          <div class="radar-sweep"></div>
+          <div class="radar-blip"></div>
+          <div class="radar-core"></div>
+        </div>
+        <div class="deep-scan-title">
+          <span class="deep-scan-eyebrow">Deep-scanning</span>
+          <span class="deep-scan-host">${escapeHtml(host)}<span class="ds-cursor"></span></span>
+        </div>
         <div class="deep-scan-sub">Careers page · ATS APIs · JobAdder · team · verified LinkedIn · contact…</div>
         <ul class="deep-scan-tasks">
-          <li><span class="ds-dot"></span> Extracting careers email &amp; contact details</li>
-          <li><span class="ds-dot"></span> Finding team members &amp; LinkedIn profiles</li>
-          <li><span class="ds-dot"></span> Looking up social profiles</li>
-          <li><span class="ds-dot"></span> Scanning website + job boards for open roles</li>
+          <li style="--i:0"><span class="ds-icon"></span> Extracting careers email &amp; contact details</li>
+          <li style="--i:1"><span class="ds-icon"></span> Finding team members &amp; LinkedIn profiles</li>
+          <li style="--i:2"><span class="ds-icon"></span> Looking up social profiles</li>
+          <li style="--i:3"><span class="ds-icon"></span> Scanning website + job boards for open roles</li>
         </ul>
+        <div class="deep-scan-progress"><div class="deep-scan-progress-bar"></div></div>
         <a class="deep-scan-link" href="${escapeAttr(c.website)}" target="_blank" rel="noopener">Open website in new tab ${ic('chevron-right', 12, false)}</a>
       </div>
     `;
