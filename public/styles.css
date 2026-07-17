@@ -42,8 +42,12 @@ body {
    account) and gets its own spacing so the bar reads left-to-right instead
    of as an undifferentiated wall of buttons. */
 .topbar-brand { flex-shrink: 0; }
-.topbar-tools { display: flex; align-items: center; gap: 12px; flex: 1 1 340px; min-width: 280px; }
-.topbar-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+/* min-width matches the group's real minimum rendered width (search box +
+   Draw/Scan/Clear buttons) — set lower than that let flexbox shrink this
+   item past what its children actually need, so they'd overflow the box
+   and visually overlap .topbar-nav instead of wrapping onto a new line. */
+.topbar-tools { display: flex; align-items: center; gap: 12px; flex: 1 1 340px; min-width: 420px; flex-wrap: wrap; row-gap: 8px; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; row-gap: 8px; }
 .topbar-status { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .topbar-account { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto; }
 

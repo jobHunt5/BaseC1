@@ -2242,7 +2242,7 @@ const App = (() => {
     const emailIcon = ic('email', 13, false);
     const emailRow = c.email
       ? (isVerifiedEmail(c)
-        ? `<div class="contact-row"><span class="contact-icon">${emailIcon}</span><a href="mailto:${escapeAttr(c.email)}">${escapeHtml(c.email)}</a><button class="copy-btn" onclick="App.copy('${escapeAttr(c.email)}')">Copy</button></div><div class="trust-note">${escapeHtml(emailTrustNote(c))}</div>`
+        ? `<div class="contact-row"><span class="contact-icon">${emailIcon}</span><a href="mailto:${escapeAttr(c.email)}">${escapeHtml(c.email)}</a><button class="copy-btn" onclick="App.copy('${escapeAttr(c.email)}')">Copy</button></div><div class="trust-note">${emailTrustNote(c)}</div>`
         : `<div class="contact-row unverified"><span class="contact-icon">${emailIcon}</span><span>${escapeHtml(c.email)}</span><button class="copy-btn" onclick="App.copy('${escapeAttr(c.email)}')">Copy</button></div><div class="trust-note warn">${escapeHtml(emailTrustNote(c))}</div>`)
       : `<div class="contact-row missing"><span class="contact-icon">${emailIcon}</span>No careers email found on their website</div>`;
 
