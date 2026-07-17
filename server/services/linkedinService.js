@@ -11,8 +11,8 @@
 
 const axios = require('axios');
 const cheerio = require('cheerio');
+const { serperSearch, isConfigured: serperConfigured } = require('./serperClient');
 
-const SERPER_KEY = process.env.SERPER_API_KEY || '';
 const TIMEOUT = parseInt(process.env.LINKEDIN_TIMEOUT_MS || '10000', 10);
 const UA = process.env.ENRICH_USER_AGENT ||
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
@@ -262,25 +262,6 @@ function attachCompanyLinkedInProfiles(team, scrapedProfiles) {
   return out;
 }
 
-async function serperSearch(query, num = 10) {
-  if (!SERPER_KEY) return [];
-  try {
-    const resp = await axios.post(
-      'https://google.serper.dev/search',
-      { q: query, num },
-      {
-        headers: { 'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json' },
-        timeout: TIMEOUT,
-        validateStatus: () => true,
-      },
-    );
-    if (resp.status !== 200) return [];
-    return resp.data?.organic || [];
-  } catch {
-    return [];
-  }
-}
-
 function mergeTeamMembers(existing, incoming) {
   const out = sanitizeTeam(existing || []);
   const seen = new Set();
@@ -319,7 +300,7 @@ async function discoverCompanyPeople(company, { limit = 12 } = {}) {
   const people = [];
 
   // Serper-only discovery — title must name the person AND mention the company.
-  if (SERPER_KEY) {
+  if (serperConfigured()) {
     const location = formatAustralianLocation(company.address);
     const city = extractCityFromAddress(company.address);
     const queries = [
@@ -333,7 +314,7 @@ async function discoverCompanyPeople(company, { limit = 12 } = {}) {
     const seen = new Set();
     for (const q of queries) {
       if (people.length >= limit) break;
-      const results = await serperSearch(q, 10);
+      const results = await serperSearch(q, { num: 10 });
       for (const r of results) {
         const p = parseSerperPersonResult(r.link, r.title, r.snippet, name);
         if (!p) continue;
@@ -352,7 +333,7 @@ async function discoverCompanyPeople(company, { limit = 12 } = {}) {
 }
 
 async function findVerifiedLinkedIn(name, companyName, { address } = {}) {
-  if (!name || !SERPER_KEY) return null;
+  if (!name || !serperConfigured()) return null;
 
   const location = formatAustralianLocation(address);
   const city = extractCityFromAddress(address);
@@ -368,7 +349,7 @@ async function findVerifiedLinkedIn(name, companyName, { address } = {}) {
   ].filter(q => q.replace(/"/g, '').trim().length > 20);
 
   for (const q of queries) {
-    const results = await serperSearch(q, 8);
+    const results = await serperSearch(q, { num: 8 });
     for (const r of results) {
       if (!profileTitleMatchesName(r.title, name)) continue;
       if (!resultMentionsCompany(r.title, r.snippet, companyName)) continue;
@@ -409,14 +390,14 @@ async function resolveTeamLinkedIn(team, companyName, { limit = 12, linkedinComp
       delete m.linkedin_url;
       m.linkedin_source = null;
     }
-    await sleep(SERPER_KEY ? 200 : 0);
+    await sleep(serperConfigured() ? 200 : 0);
   }
 
   return out;
 }
 
 function isAutomaticLookupEnabled() {
-  return !!SERPER_KEY;
+  return serperConfigured();
 }
 
 module.exports = {

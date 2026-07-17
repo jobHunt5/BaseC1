@@ -19,6 +19,9 @@ const {
 const { getLearningStats } = require('../services/matchLearningService');
 const { getSettingsWithMeta, updateSetting } = require('../services/settingsService');
 const { getAdminFromRequest } = require('./adminAuth');
+const {
+  status: getSerperStatus, getUsageToday: getSerperUsage, budgetLimit: getSerperBudget,
+} = require('../services/serperClient');
 
 const router = express.Router();
 
@@ -40,6 +43,10 @@ router.get('/stats', (req, res) => {
       has_serper_key: !!process.env.SERPER_API_KEY,
       has_openai_key: !!process.env.OPENAI_API_KEY,
       has_smtp: !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
+      serper_state: getSerperStatus().state,
+      serper_message: getSerperStatus().message,
+      serper_usage_today: getSerperUsage(),
+      serper_daily_budget: getSerperBudget(),
     },
   });
 });

@@ -20,6 +20,18 @@ const TUNABLE = {
     label: 'Parallel Google calls', default: '8', min: 1, max: 20,
     hint: 'How many Google Places requests run at once during a scan.',
   },
+  DEEP_SCAN_MAX_COMPANIES: {
+    label: 'Deep-scan coverage', default: '80', min: 20, max: 400,
+    hint: 'How many scanned companies (per scan) get a full pass — website jobs, Seek/Indeed/LinkedIn/Jora search, LinkedIn team lookup. Higher = far more thorough, far more outbound requests.',
+  },
+  DEEP_SCAN_CONCURRENCY: {
+    label: 'Parallel deep-scans', default: '4', min: 1, max: 16,
+    hint: 'How many companies get deep-scanned at once in the background after a map scan.',
+  },
+  SERPER_DAILY_BUDGET: {
+    label: 'Serper daily call budget', default: '300', min: 10, max: 5000,
+    hint: 'Caps LinkedIn lookup + Seek/Indeed/LinkedIn/Jora search to this many Serper calls per day, so a busy day fails safely at a known cost instead of exhausting your account balance unnoticed.',
+  },
   // Deliberately not including ENRICH_LIMIT / ENRICH_CONCURRENCY here: they're
   // currently only ever read for the /api/health report, not actually
   // wired into any enrichment code path — exposing them as "tunable" would

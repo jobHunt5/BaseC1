@@ -50,9 +50,12 @@ router.post('/', async (req, res) => {
   for (const p of places) upsertCompany(p);
   recordScan({ ...bounds, provider, resultCount: places.length }, req.user.id);
 
-  // Queue background deep scans (website, jobs, LinkedIn) for companies with websites.
+  // Queue background deep scans (website, jobs, LinkedIn) for companies with
+  // websites — admin-tunable (Settings → Deep-scan coverage), read live so
+  // a change takes effect on the very next scan, no restart needed.
   const withSites = places.filter(p => p.website).map(p => p.id);
-  if (withSites.length) enqueueMany(withSites.slice(0, 80));
+  const deepScanCap = parseInt(process.env.DEEP_SCAN_MAX_COMPANIES || '80', 10);
+  if (withSites.length) enqueueMany(withSites.slice(0, deepScanCap));
 
   const { attachProfile } = require('../services/companyProfileService');
   // Re-fetch hydrated (companies already upserted above) so each result
@@ -75,6 +78,10 @@ router.post('/', async (req, res) => {
 // Area-wide job-board search — catches roles whose employer was NOT discovered
 // in the Places sweep. Separate endpoint so the map scan stays fast.
 //   POST /api/scan/area-jobs  body: { south, west, north, east, terms? }
+//   terms: a string, or an array of role terms (e.g. one per selected
+//   industry) — capped to 4 so a user with many industries picked can't
+//   blow up Serper usage on a single area scan (4 terms x 4 boards = 16
+//   queries, on top of the 4 baseline "just show me jobs here" queries).
 router.post('/area-jobs', async (req, res) => {
   const { south, west, north, east, terms } = req.body || {};
   if ([south, west, north, east].some(v => typeof v !== 'number')) {
@@ -83,10 +90,12 @@ router.post('/area-jobs', async (req, res) => {
   if (!isAreaJobSearchEnabled()) {
     return res.json({ enabled: false, jobs: [], suburb: '', count: 0 });
   }
+  const cleanTerms = (Array.isArray(terms) ? terms : [terms])
+    .map(t => String(t || '').trim().slice(0, 60))
+    .filter(Boolean)
+    .slice(0, 4);
   try {
-    const result = await findAreaJobs({ south, west, north, east }, {
-      terms: String(terms || '').slice(0, 60),
-    });
+    const result = await findAreaJobs({ south, west, north, east }, { terms: cleanTerms });
     res.json({ ...result, count: result.jobs.length });
   } catch (err) {
     res.status(502).json({ error: err.message });

@@ -10,9 +10,8 @@
 // company — and clearly labelled by source.
 
 const axios = require('axios');
+const { serperSearch, isConfigured: serperConfigured } = require('./serperClient');
 
-const SERPER_KEY = process.env.SERPER_API_KEY || '';
-const TIMEOUT = parseInt(process.env.JOB_SEARCH_TIMEOUT_MS || '6000', 10);
 const CACHE_TTL_MS = 1000 * 60 * 30;
 const cache = new Map();
 
@@ -28,25 +27,6 @@ const ROLE_RE = /\b(developer|engineer|designer|manager|lead|architect|analyst|s
 const JUNK_TITLE = /^(jobs?|careers?|search results|hiring|apply|view all|see all|company profile|jobs in|.*\bjobs\b\s*$)/i;
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-async function serperSearch(query, num = 10) {
-  if (!SERPER_KEY) return [];
-  try {
-    const resp = await axios.post(
-      'https://google.serper.dev/search',
-      { q: query, num, gl: 'au', hl: 'en' },
-      {
-        headers: { 'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json' },
-        timeout: TIMEOUT,
-        validateStatus: () => true,
-      },
-    );
-    if (resp.status !== 200) return [];
-    return resp.data?.organic || [];
-  } catch {
-    return [];
-  }
-}
 
 // Reverse-geocode the centre of the bbox to a suburb/locality via free Nominatim.
 async function reverseGeocodeSuburb(bounds) {
@@ -113,12 +93,17 @@ function isPlausible(title, url, board) {
 async function searchAreaBoard(board, suburb, state, terms) {
   const loc = [suburb, state].filter(Boolean).join(' ');
   const queries = [`${board.site} jobs ${loc}`.trim()];
-  if (terms) queries.push(`${board.site} ${terms} jobs ${loc}`.trim());
+  // `terms` is a plain string for a single generic keyword filter, or an
+  // array when the caller wants one targeted query per selected industry
+  // (e.g. a user who picked Design + Dev + AI + VR gets one Seek/Indeed/
+  // LinkedIn/Jora query per industry instead of one blended, weaker query).
+  const termList = Array.isArray(terms) ? terms.filter(Boolean) : [terms].filter(Boolean);
+  for (const t of termList) queries.push(`${board.site} ${t} jobs ${loc}`.trim());
 
   const out = [];
   const seen = new Set();
   for (const q of queries) {
-    const results = await serperSearch(q, 10);
+    const results = await serperSearch(q, { num: 10, gl: 'au', hl: 'en' });
     for (const r of results) {
       const url = r.link || '';
       if (!board.urlRe.test(url)) continue;
@@ -146,15 +131,17 @@ async function searchAreaBoard(board, suburb, state, terms) {
 /**
  * Find jobs across an area (bbox) from the major boards.
  *   bounds: { south, west, north, east }
- *   opts.terms: optional keyword filter (e.g. "developer")
+ *   opts.terms: optional keyword filter — a string, or an array of terms
+ *     (one query per term per board, e.g. the user's selected industries)
  */
-async function findAreaJobs(bounds, { terms = '', limit = 60 } = {}) {
-  if (!SERPER_KEY) return { enabled: false, suburb: '', jobs: [] };
+async function findAreaJobs(bounds, { terms = '', limit = 100 } = {}) {
+  if (!serperConfigured()) return { enabled: false, suburb: '', jobs: [] };
 
   const { suburb, state } = await reverseGeocodeSuburb(bounds);
   if (!suburb && !state) return { enabled: true, suburb: '', jobs: [] };
 
-  const cacheKey = `${suburb}|${state}|${terms}`.toLowerCase();
+  const termKey = Array.isArray(terms) ? terms.slice().sort().join(',') : terms;
+  const cacheKey = `${suburb}|${state}|${termKey}`.toLowerCase();
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
     return { enabled: true, suburb, jobs: cached.jobs.slice(0, limit) };
@@ -180,7 +167,7 @@ async function findAreaJobs(bounds, { terms = '', limit = 60 } = {}) {
 }
 
 function isAreaJobSearchEnabled() {
-  return !!SERPER_KEY;
+  return serperConfigured();
 }
 
 module.exports = {

@@ -13,6 +13,9 @@ const { getProvider, getCoverageHint } = require('./services/placesService');
 const { applyToProcessEnv } = require('./services/settingsService');
 const { repairOpportunityTargetClassification, repairBogusScrapedJobs, repairBogusTeamMembers } = require('./db');
 const { warmup: warmupPdfEngine } = require('./services/resumeService');
+const {
+  status: serperStatus, getUsageToday: getSerperUsageToday, budgetLimit: getSerperBudgetLimit,
+} = require('./services/serperClient');
 
 // Any settings an admin has previously changed override the .env defaults
 // from here on — before anything else touches process.env.
@@ -31,6 +34,7 @@ app.get('/admin', (req, res) => {
 
 app.get('/api/health', (req, res) => {
   const hasGoogleKey = !!process.env.GOOGLE_MAPS_API_KEY;
+  const serper = serperStatus();
   res.json({
     ok: true,
     provider: getProvider(),
@@ -41,6 +45,10 @@ app.get('/api/health', (req, res) => {
     hasSerperKey: !!process.env.SERPER_API_KEY,
     linkedinAutoLookup: !!process.env.SERPER_API_KEY,
     externalJobSearch: !!process.env.SERPER_API_KEY,
+    serperState: serper.state,
+    serperMessage: serper.message,
+    serperUsageToday: getSerperUsageToday(),
+    serperDailyBudget: getSerperBudgetLimit(),
     enrichLimit: parseInt(process.env.ENRICH_LIMIT || '0', 10) || null,
     enrichConcurrency: parseInt(process.env.ENRICH_CONCURRENCY || '6', 10),
     supportedAts: ['greenhouse', 'lever', 'workable', 'ashby', 'jobadder'],

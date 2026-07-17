@@ -10,7 +10,12 @@ const {
   sanitizeTeam,
 } = require('./linkedinService');
 
-const CONCURRENCY = parseInt(process.env.DEEP_SCAN_CONCURRENCY || '4', 10);
+// Read live (not cached at module load) — settingsService.js applies admin
+// overrides onto process.env at runtime, and a module-level const here
+// would freeze whatever value was set at require() time, silently ignoring
+// any later change until the process restarts.
+function concurrency() { return parseInt(process.env.DEEP_SCAN_CONCURRENCY || '4', 10); }
+
 const queue = [];
 let active = 0;
 
@@ -28,7 +33,7 @@ function enqueueMany(companyIds) {
 }
 
 async function pump() {
-  while (active < CONCURRENCY && queue.length) {
+  while (active < concurrency() && queue.length) {
     const { id } = queue.shift();
     active++;
     runDeepScan(id)

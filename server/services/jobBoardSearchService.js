@@ -4,11 +4,9 @@
 // Trusted sources only: listing title/snippet must mention the company; URL must
 // be a real job posting on a known board (Seek, Indeed AU, LinkedIn Jobs, Jora).
 
-const axios = require('axios');
 const { formatAustralianLocation, extractCityFromAddress } = require('./linkedinService');
+const { serperSearch, isConfigured: serperConfigured } = require('./serperClient');
 
-const SERPER_KEY = process.env.SERPER_API_KEY || '';
-const TIMEOUT = parseInt(process.env.JOB_SEARCH_TIMEOUT_MS || '6000', 10);
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 const cache = new Map();
 
@@ -86,25 +84,6 @@ function parseLocation(snippet, address) {
   return city ? `${city}, Australia` : 'Australia';
 }
 
-async function serperSearch(query, num = 8) {
-  if (!SERPER_KEY) return [];
-  try {
-    const resp = await axios.post(
-      'https://google.serper.dev/search',
-      { q: query, num, gl: 'au', hl: 'en' },
-      {
-        headers: { 'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json' },
-        timeout: TIMEOUT,
-        validateStatus: () => true,
-      },
-    );
-    if (resp.status !== 200) return [];
-    return resp.data?.organic || [];
-  } catch {
-    return [];
-  }
-}
-
 async function searchBoard(board, company, terms, location) {
   const queries = [
     `${board.site} "${terms.short}" ${location}`.trim(),
@@ -116,7 +95,7 @@ async function searchBoard(board, company, terms, location) {
 
   for (const q of queries) {
     if (jobs.length >= 8) break;
-    const results = await serperSearch(q, 8);
+    const results = await serperSearch(q, { num: 8, gl: 'au', hl: 'en' });
     for (const r of results) {
       const url = r.link || '';
       if (!board.urlRe.test(url)) continue;
@@ -145,7 +124,7 @@ async function searchBoard(board, company, terms, location) {
 }
 
 async function findExternalBoardJobs(company, { limit = 15 } = {}) {
-  if (!SERPER_KEY || !company?.name) return [];
+  if (!serperConfigured() || !company?.name) return [];
 
   const terms = companySearchTerms(company.name);
   const location = formatAustralianLocation(company.address);
@@ -174,7 +153,7 @@ async function findExternalBoardJobs(company, { limit = 15 } = {}) {
 }
 
 function isExternalJobSearchEnabled() {
-  return !!SERPER_KEY;
+  return serperConfigured();
 }
 
 module.exports = {

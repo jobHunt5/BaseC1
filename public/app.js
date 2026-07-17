@@ -780,6 +780,16 @@ const App = (() => {
       } else if (banner) {
         banner.style.display = 'none';
       }
+
+      const serperBanner = document.getElementById('serperBanner');
+      if (serperBanner) {
+        if (h.serperState === 'budget-exceeded' || h.serperState === 'error') {
+          serperBanner.style.display = '';
+          serperBanner.innerHTML = `<strong>Job-board search paused</strong> — ${escapeHtml(h.serperMessage || 'Seek/Indeed/LinkedIn/Jora search and LinkedIn lookup are temporarily unavailable.')}`;
+        } else {
+          serperBanner.style.display = 'none';
+        }
+      }
     } catch {}
   }
 
@@ -1007,6 +1017,17 @@ const App = (() => {
     }
   }
 
+  // Targets the search at the user's own selected industries (e.g. Design +
+  // Dev + AI + VR) instead of a generic unfiltered "jobs here" search —
+  // capped at 4 to match the server-side cap (server/routes/scan.js).
+  function areaJobSearchTerms() {
+    const sectors = (profile.jobSectors || []).filter(id => id !== 'all');
+    return sectors
+      .map(id => window.AreaHuntIndustries?.roleSearchTerm?.(id))
+      .filter(Boolean)
+      .slice(0, 4);
+  }
+
   async function fetchAreaJobs(bounds) {
     state.areaJobsLoading = true;
     state.areaJobs = [];
@@ -1015,7 +1036,7 @@ const App = (() => {
       const resp = await fetch('/api/scan/area-jobs', {
         method: 'POST',
         headers: AuthGate.authHeaders(),
-        body: JSON.stringify(bounds),
+        body: JSON.stringify({ ...bounds, terms: areaJobSearchTerms() }),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();

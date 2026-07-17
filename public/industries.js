@@ -5,10 +5,12 @@
 const AreaHuntIndustries = (() => {
   const OPTIONS = [
     { id: 'all', label: 'All', icon: 'sparkles', desc: 'Every business' },
-    { id: 'design', label: 'Design', icon: 'design', cats: ['design'] },
-    { id: 'dev', label: 'Dev', icon: 'dev', cats: ['dev'] },
-    { id: 'ai', label: 'AI', icon: 'ai', cats: ['ai'] },
-    { id: 'marketing', label: 'Marketing', icon: 'marketing', cats: ['marketing'] },
+    { id: 'design', label: 'Design', icon: 'design', cats: ['design'], roleQuery: 'UX UI product designer' },
+    { id: 'dev', label: 'Dev', icon: 'dev', cats: ['dev'], roleQuery: 'software developer engineer' },
+    { id: 'ai', label: 'AI', icon: 'ai', cats: ['ai'], roleQuery: 'AI machine learning engineer' },
+    { id: 'vr', label: 'VR/AR', icon: 'vr', cats: ['vr'], roleQuery: 'VR AR XR virtual reality developer',
+      keywords: ['virtual reality', 'augmented reality', 'mixed reality', 'extended reality', 'immersive tech', 'metaverse', 'spatial computing', 'unity developer', 'unreal engine'] },
+    { id: 'marketing', label: 'Marketing', icon: 'marketing', cats: ['marketing'], roleQuery: 'digital marketing' },
     { id: 'chef', label: 'Chef', icon: 'chef', keywords: ['restaurant', 'cafe', 'café', 'kitchen', 'catering', 'food', 'chef', 'cook', 'bistro', 'dining', 'hospitality', 'eatery', 'takeaway'] },
     { id: 'baker', label: 'Baker', icon: 'baker', keywords: ['bakery', 'pastry', 'patisserie', 'baker', 'bread', 'cake'] },
     { id: 'barista', label: 'Barista', icon: 'barista', keywords: ['barista', 'coffee', 'café', 'cafe', 'espresso'] },
@@ -28,7 +30,7 @@ const AreaHuntIndustries = (() => {
     { id: 'creative', label: 'Creative', icon: 'creative', keywords: ['photo', 'video', 'film', 'production', 'creative', 'animation', 'media'] },
     { id: 'admin', label: 'Admin', icon: 'admin', keywords: ['admin', 'office', 'reception', 'secretary', 'virtual assistant', 'clerical'] },
     { id: 'customer-service', label: 'Support', icon: 'support', keywords: ['customer service', 'call centre', 'call center', 'support', 'helpdesk'] },
-    { id: 'engineering', label: 'Engineering', icon: 'engineering', keywords: ['engineer', 'engineering', 'mechanical engineer', 'civil engineer', 'electrical engineer', 'structural engineer', 'chemical engineer'] },
+    { id: 'engineering', label: 'Engineering', icon: 'engineering', roleQuery: 'engineer', keywords: ['engineer', 'engineering', 'mechanical engineer', 'civil engineer', 'electrical engineer', 'structural engineer', 'chemical engineer'] },
     { id: 'manufacturing', label: 'Manufacturing', icon: 'manufacturing', keywords: ['manufactur', 'factory', 'production line', 'assembly line', 'machinist', 'fabrication'] },
     { id: 'agriculture', label: 'Agriculture', icon: 'agriculture', keywords: ['farm', 'agricultur', 'agronomist', 'livestock', 'crop', 'dairy farm', 'viticulture', 'horticulture', 'orchard'] },
     { id: 'real-estate', label: 'Real Estate', icon: 'real-estate', keywords: ['real estate', 'realty', 'property manage', 'leasing agent', 'estate agent', 'property group'] },
@@ -79,6 +81,17 @@ const AreaHuntIndustries = (() => {
     return activeIds.some(id => matchesFilter(company, id));
   }
 
+  // Job-board search phrase for an industry — a role-oriented query
+  // ("UX UI product designer") reads very differently to Seek/Indeed than
+  // the company-type keywords used for matchesFilter ("café", "restaurant"),
+  // so this is its own field rather than reusing `keywords`. Falls back to
+  // the plain label for industries that don't have a hand-tuned roleQuery.
+  function roleSearchTerm(id) {
+    const def = BY_ID[id];
+    if (!def || id === 'all') return '';
+    return def.roleQuery || def.label;
+  }
+
   // Onboarding labels — icon is rendered separately by the caller (see
   // authFlow.js's chipGroup), label stays plain text (no emoji baked in).
   function onboardingOptions() {
@@ -99,5 +112,5 @@ const AreaHuntIndustries = (() => {
     return `<svg class="ind-icon" width="${size}" height="${size}" aria-hidden="true"><use href="#icon-${iconId}"></use></svg>`;
   }
 
-  return { OPTIONS, BY_ID, matchesFilter, matchesAnyFilter, onboardingOptions, iconSvg };
+  return { OPTIONS, BY_ID, matchesFilter, matchesAnyFilter, onboardingOptions, iconSvg, roleSearchTerm };
 })();

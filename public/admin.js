@@ -260,6 +260,12 @@
           ${configRow('OpenAI (AI fit scoring)', config.has_openai_key)}
           ${configRow('SMTP (direct email send)', config.has_smtp)}
           <div class="admin-config-row"><span class="admin-config-dot on"></span><span>Places provider</span><span class="admin-config-state">${escapeHtml(config.places_provider)}</span></div>
+          ${config.has_serper_key ? `
+          <div class="admin-config-row">
+            <span class="admin-config-dot ${config.serper_state === 'ok' ? 'on' : 'warn'}"></span>
+            <span>Serper usage today</span>
+            <span class="admin-config-state">${fmtNum(config.serper_usage_today)} / ${fmtNum(config.serper_daily_budget)}${config.serper_state !== 'ok' ? ` — ${escapeHtml(config.serper_message)}` : ''}</span>
+          </div>` : ''}
         </div>
       </div>`;
 

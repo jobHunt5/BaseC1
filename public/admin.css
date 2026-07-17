@@ -116,6 +116,7 @@ body {
 .admin-config-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .admin-config-dot.on { background: var(--green); }
 .admin-config-dot.off { background: var(--muted); opacity: 0.5; }
+.admin-config-dot.warn { background: var(--red); }
 .admin-config-state { color: var(--muted); font-size: 11px; }
 .admin-feature-pill {
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
