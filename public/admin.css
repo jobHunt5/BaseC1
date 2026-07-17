@@ -171,7 +171,60 @@ body {
 .admin-drawer-row span:last-child { text-align: right; }
 .admin-drawer-actions { display: flex; flex-direction: column; gap: 8px; }
 
+/* KPI row */
+.admin-kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 14px; }
+.admin-kpi-tile {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 18px;
+}
+.admin-kpi-value { font-size: 26px; font-weight: 700; line-height: 1.1; color: var(--text); }
+.admin-kpi-label { font-size: 11.5px; color: var(--muted); margin-top: 5px; }
+
+/* Section headers + range toggle */
+.admin-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 12px; }
+.admin-card-head .admin-card-title { margin-bottom: 0; }
+.admin-range-toggle { display: flex; gap: 2px; background: var(--card); border-radius: 8px; padding: 2px; }
+.admin-range-btn {
+  background: none; border: none; color: var(--muted); font-family: inherit; font-size: 11px;
+  font-weight: 600; padding: 5px 10px; border-radius: 6px; cursor: pointer;
+}
+.admin-range-btn:hover { color: var(--text); }
+.admin-range-btn.active { background: var(--accent); color: #fff; }
+
+/* Chart primitives (adminCharts.js) */
+.chart-svg { display: block; overflow: visible; }
+.chart-hit { cursor: crosshair; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; }
+.chart-legend-item { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
+.chart-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.chart-tooltip {
+  position: fixed; z-index: 1000; display: none; pointer-events: none;
+  background: #0b0b12; border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: 11.5px; color: var(--text); box-shadow: var(--shadow);
+  max-width: 220px;
+}
+.chart-tip-title { font-weight: 700; margin-bottom: 5px; color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+.chart-tip-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.chart-tip-row b { margin-left: auto; padding-left: 10px; }
+
+.chart-hbar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; cursor: default; }
+.chart-hbar-row:last-child { margin-bottom: 0; }
+.chart-hbar-label { width: 108px; flex-shrink: 0; font-size: 11.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart-hbar-track { flex: 1; background: var(--card); border-radius: 10px; height: 18px; position: relative; overflow: hidden; }
+.chart-hbar-fill { height: 100%; border-radius: 10px; min-width: 4px; }
+.chart-hbar-value { width: 42px; flex-shrink: 0; text-align: right; font-size: 11.5px; font-weight: 600; color: var(--text); }
+
+.chart-meter { width: 100%; height: 8px; background: var(--card); border-radius: 8px; overflow: hidden; }
+.chart-meter-fill { height: 100%; border-radius: 8px; }
+
+.admin-quality-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.admin-quality-label { width: 130px; flex-shrink: 0; font-size: 12px; color: var(--text); }
+.admin-quality-pct { width: 40px; flex-shrink: 0; text-align: right; font-size: 12px; font-weight: 600; }
+
+.admin-card-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
 @media (max-width: 760px) {
   .admin-grid { grid-template-columns: 1fr; }
+  .admin-kpi-row { grid-template-columns: repeat(2, 1fr); }
   .admin-topbar { flex-wrap: wrap; gap: 12px; }
 }

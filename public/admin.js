@@ -103,18 +103,54 @@
 
   // ---- overview -------------------------------------------------------
 
+  let overviewDays = 30;
+
+  function industryLabel(cat) {
+    if (cat === 'other') return 'Other';
+    const opt = window.AreaHuntIndustries?.BY_ID?.[cat];
+    if (opt) return opt.label;
+    return cat.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  function dataQualityRows(dq) {
+    const pct = (n) => dq.total ? Math.round((n / dq.total) * 100) : 0;
+    const rows = [
+      ['Has an email on file', dq.with_email],
+      ['Verified email', dq.verified_email],
+      ['Has team info', dq.with_team],
+      ['Has jobs found', dq.with_jobs],
+      ['Has a website', dq.with_website],
+    ];
+    return rows.map(([label, n]) => `
+      <div class="admin-quality-row">
+        <div class="admin-quality-label">${escapeHtml(label)}</div>
+        ${window.AdminCharts.meter(pct(n), AdminCharts.COLORS.blue)}
+        <div class="admin-quality-pct">${pct(n)}%</div>
+      </div>`).join('');
+  }
+
   async function loadOverview() {
     const panel = document.getElementById('panel-overview');
     panel.innerHTML = `<div class="admin-loading">Loading…</div>`;
-    let stats;
+    let stats, analytics;
     try {
-      stats = await fetch('/api/admin/stats', { headers: authHeaders() }).then(r => r.json());
+      [stats, analytics] = await Promise.all([
+        fetch('/api/admin/stats', { headers: authHeaders() }).then(r => r.json()),
+        fetch(`/api/admin/analytics?days=${overviewDays}`, { headers: authHeaders() }).then(r => r.json()),
+      ]);
     } catch {
       panel.innerHTML = `<div class="admin-loading">Could not reach the server.</div>`;
       return;
     }
+    renderOverview(stats, analytics);
+  }
+
+  function renderOverview(stats, analytics) {
+    const panel = document.getElementById('panel-overview');
     const { scans, pipeline, job_quality, ai_fit, user_count, config } = stats;
     const pipelineTotal = (pipeline.none || 0) + (pipeline.interested || 0) + (pipeline.applied || 0) + (pipeline.skipped || 0);
+    const savedOrApplied = Math.max(1, (pipeline.interested || 0) + (pipeline.applied || 0));
+    const applyRate = Math.round(((pipeline.applied || 0) / savedOrApplied) * 100);
 
     const configRow = (label, ok) => `
       <div class="admin-config-row">
@@ -132,20 +168,71 @@
       </tr>`).join('');
 
     panel.innerHTML = `
+      <div class="admin-kpi-row">
+        <div class="admin-kpi-tile"><div class="admin-kpi-value">${fmtNum(user_count)}</div><div class="admin-kpi-label">Total users</div></div>
+        <div class="admin-kpi-tile"><div class="admin-kpi-value">${fmtNum(analytics.data_quality.total)}</div><div class="admin-kpi-label">Companies discovered</div></div>
+        <div class="admin-kpi-tile"><div class="admin-kpi-value">${fmtNum(scans.totals?.scan_count)}</div><div class="admin-kpi-label">Scans run</div></div>
+        <div class="admin-kpi-tile"><div class="admin-kpi-value">${fmtNum(pipeline.applied)}</div><div class="admin-kpi-label">Applications submitted</div></div>
+      </div>
+
       <div class="admin-grid">
-        <div class="admin-card">
-          <div class="admin-card-title">Users</div>
-          <div class="admin-stat-row">
-            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(user_count)}</div><div class="admin-stat-label">Total accounts</div></div>
+        <div class="admin-card admin-card-wide">
+          <div class="admin-card-head">
+            <div>
+              <div class="admin-card-title">Growth</div>
+              <div class="admin-card-sub">Signups, scans and applications per day</div>
+            </div>
+            <div class="admin-range-toggle" id="rangeToggle">
+              ${[7, 30, 90].map(d => `<button type="button" class="admin-range-btn ${d === overviewDays ? 'active' : ''}" data-days="${d}">${d}d</button>`).join('')}
+            </div>
           </div>
+          <div id="growthChart"></div>
         </div>
 
         <div class="admin-card">
-          <div class="admin-card-title">Scanning</div>
+          <div class="admin-card-title">Pipeline funnel (all users)</div>
+          <div class="admin-card-sub">Saved → applied conversion: ${applyRate}%</div>
+          <div id="funnelChart" style="margin-top:10px"></div>
+        </div>
+
+        <div class="admin-card">
+          <div class="admin-card-title">Industries discovered</div>
+          <div id="industryChart" style="margin-top:6px"></div>
+        </div>
+
+        <div class="admin-card">
+          <div class="admin-card-title">Data completeness</div>
+          <div class="admin-card-sub">Share of scanned companies with usable contact/job data</div>
+          <div style="margin-top:8px">${dataQualityRows(analytics.data_quality)}</div>
+        </div>
+
+        <div class="admin-card">
+          <div class="admin-card-title">Job quality (scam detection)</div>
           <div class="admin-stat-row">
-            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(scans.totals?.scan_count)}</div><div class="admin-stat-label">Scans run</div></div>
-            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(scans.totals?.total_found)}</div><div class="admin-stat-label">Companies found</div></div>
+            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(job_quality.total)}</div><div class="admin-stat-label">Jobs scored</div></div>
+            <div class="admin-stat"><div class="admin-stat-num">${fmtPct(job_quality.avg_score)}</div><div class="admin-stat-label">Avg quality</div></div>
+            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(job_quality.suspicious_count)}</div><div class="admin-stat-label">Flagged suspicious</div></div>
           </div>
+          <div id="qualityBuckets"></div>
+        </div>
+
+        <div class="admin-card">
+          <div class="admin-card-title">AI fit checks</div>
+          <div class="admin-stat-row">
+            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(ai_fit.total)}</div><div class="admin-stat-label">Checks run</div></div>
+            <div class="admin-stat"><div class="admin-stat-num">${ai_fit.avg_score != null ? Math.round(ai_fit.avg_score) : '—'}</div><div class="admin-stat-label">Avg score /100</div></div>
+          </div>
+          <div id="aiFitBuckets"></div>
+        </div>
+
+        <div class="admin-card">
+          <div class="admin-card-title">Top companies by interest</div>
+          <div id="topCompaniesChart" style="margin-top:6px"></div>
+        </div>
+
+        <div class="admin-card">
+          <div class="admin-card-title">Job sources</div>
+          <div id="jobSourcesChart" style="margin-top:6px"></div>
         </div>
 
         <div class="admin-card admin-card-wide">
@@ -157,33 +244,6 @@
             </table>` : '<div class="admin-empty-hint">No scans yet.</div>'}
         </div>
 
-        <div class="admin-card">
-          <div class="admin-card-title">Pipeline funnel (all users)</div>
-          <div class="admin-funnel">
-            <div class="admin-funnel-row"><span>Untouched</span><span>${fmtNum(pipeline.none)}</span></div>
-            <div class="admin-funnel-row"><span>Saved</span><span>${fmtNum(pipeline.interested)}</span></div>
-            <div class="admin-funnel-row"><span>Applied</span><span>${fmtNum(pipeline.applied)}</span></div>
-            <div class="admin-funnel-row"><span>Skipped</span><span>${fmtNum(pipeline.skipped)}</span></div>
-          </div>
-        </div>
-
-        <div class="admin-card">
-          <div class="admin-card-title">Job quality (scam detection)</div>
-          <div class="admin-stat-row">
-            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(job_quality.total)}</div><div class="admin-stat-label">Jobs scored</div></div>
-            <div class="admin-stat"><div class="admin-stat-num">${fmtPct(job_quality.avg_score)}</div><div class="admin-stat-label">Avg quality</div></div>
-            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(job_quality.suspicious_count)}</div><div class="admin-stat-label">Flagged suspicious</div></div>
-          </div>
-        </div>
-
-        <div class="admin-card">
-          <div class="admin-card-title">AI fit checks</div>
-          <div class="admin-stat-row">
-            <div class="admin-stat"><div class="admin-stat-num">${fmtNum(ai_fit.total)}</div><div class="admin-stat-label">Checks run</div></div>
-            <div class="admin-stat"><div class="admin-stat-num">${ai_fit.avg_score != null ? Math.round(ai_fit.avg_score) : '—'}</div><div class="admin-stat-label">Avg score /100</div></div>
-          </div>
-        </div>
-
         <div class="admin-card admin-card-wide">
           <div class="admin-card-title">Connections</div>
           ${configRow('Google Places API', config.has_google_key)}
@@ -193,6 +253,63 @@
           <div class="admin-config-row"><span class="admin-config-dot on"></span><span>Places provider</span><span class="admin-config-state">${escapeHtml(config.places_provider)}</span></div>
         </div>
       </div>`;
+
+    AdminCharts.lineMulti(document.getElementById('growthChart'), {
+      labels: analytics.signups_series.map(r => r.day),
+      series: [
+        { label: 'Signups', color: AdminCharts.COLORS.blue, points: analytics.signups_series.map(r => r.n) },
+        { label: 'Scans', color: AdminCharts.COLORS.aqua, points: analytics.scans_series.map(r => r.n) },
+        { label: 'Applications', color: AdminCharts.COLORS.green, points: analytics.applied_series.map(r => r.n) },
+      ],
+    });
+
+    AdminCharts.barH(document.getElementById('funnelChart'), {
+      items: [
+        { label: 'Untouched', value: pipeline.none || 0, color: '#4a4a5e' },
+        { label: 'Saved', value: pipeline.interested || 0, color: AdminCharts.COLORS.blue },
+        { label: 'Applied', value: pipeline.applied || 0, color: AdminCharts.STATUS.good },
+        { label: 'Skipped', value: pipeline.skipped || 0, color: '#4a4a5e' },
+      ],
+    });
+
+    AdminCharts.barH(document.getElementById('industryChart'), {
+      items: analytics.industries.map(i => ({ label: industryLabel(i.cat), value: i.n })),
+    });
+
+    AdminCharts.buckets(document.getElementById('qualityBuckets'), {
+      items: [
+        { label: 'Critical', value: analytics.quality_buckets.critical, color: AdminCharts.STATUS.critical },
+        { label: 'Serious', value: analytics.quality_buckets.serious, color: AdminCharts.STATUS.serious },
+        { label: 'Fair', value: analytics.quality_buckets.warning, color: AdminCharts.STATUS.warning },
+        { label: 'Good', value: analytics.quality_buckets.good, color: AdminCharts.STATUS.good },
+      ],
+    });
+
+    AdminCharts.buckets(document.getElementById('aiFitBuckets'), {
+      items: [
+        { label: '0-25', value: analytics.ai_fit_buckets.critical, color: AdminCharts.STATUS.critical },
+        { label: '25-50', value: analytics.ai_fit_buckets.serious, color: AdminCharts.STATUS.serious },
+        { label: '50-75', value: analytics.ai_fit_buckets.warning, color: AdminCharts.STATUS.warning },
+        { label: '75-100', value: analytics.ai_fit_buckets.good, color: AdminCharts.STATUS.good },
+      ],
+    });
+
+    AdminCharts.barH(document.getElementById('topCompaniesChart'), {
+      items: analytics.top_companies.map(c => ({ label: c.name, value: c.n })),
+      color: AdminCharts.COLORS.violet,
+    });
+
+    AdminCharts.barH(document.getElementById('jobSourcesChart'), {
+      items: analytics.job_sources.map(s => ({ label: s.source, value: s.n })),
+      color: AdminCharts.COLORS.orange,
+    });
+
+    document.querySelectorAll('#rangeToggle .admin-range-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        overviewDays = Number(btn.dataset.days);
+        loadOverview();
+      });
+    });
   }
 
   // ---- users ------------------------------------------------------------

@@ -3,6 +3,7 @@
 // separate admin token, not the per-user dummy auth in auth.js.
 //
 //   GET    /api/admin/stats            -> global scan/pipeline/quality/config stats
+//   GET    /api/admin/analytics        -> time series + breakdowns for the dashboard charts
 //   GET    /api/admin/settings         -> tunable scan defaults
 //   PUT    /api/admin/settings         body: { key, value }
 //   GET    /api/admin/users            -> every user + their pipeline counts
@@ -13,7 +14,7 @@
 const express = require('express');
 const {
   getScanStats, getStatusCounts, getJobQualityStats, getAiFitUsageStats,
-  getAllUsersWithStats, getUserById, setUserSuspended, deleteUser,
+  getAllUsersWithStats, getUserById, setUserSuspended, deleteUser, getAnalytics,
 } = require('../db');
 const { getLearningStats } = require('../services/matchLearningService');
 const { getSettingsWithMeta, updateSetting } = require('../services/settingsService');
@@ -41,6 +42,10 @@ router.get('/stats', (req, res) => {
       has_smtp: !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
     },
   });
+});
+
+router.get('/analytics', (req, res) => {
+  res.json(getAnalytics(req.query.days));
 });
 
 router.get('/settings', (req, res) => {

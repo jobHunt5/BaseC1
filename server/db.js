@@ -803,6 +803,152 @@ function getAiFitUsageStats() {
   return { total: row.total || 0, avg_score: row.avg_score || null };
 }
 
+// --- admin analytics (time series + breakdowns for the dashboard) ---
+
+// Builds one row per day for the trailing `days` days (UTC calendar days),
+// filling in zero for days with no matching rows, so the chart never has to
+// guess at gaps in the x-axis.
+function fillDays(rows, days) {
+  const byDay = new Map(rows.map(r => [r.day, r.n]));
+  const out = [];
+  const now = nowMs();
+  for (let i = days - 1; i >= 0; i--) {
+    const day = new Date(now - i * 86400000).toISOString().slice(0, 10);
+    out.push({ day, n: byDay.get(day) || 0 });
+  }
+  return out;
+}
+
+function getSignupsSeries(days) {
+  const since = nowMs() - days * 86400000;
+  const rows = db.prepare(`
+    SELECT strftime('%Y-%m-%d', created_at/1000, 'unixepoch') AS day, COUNT(*) AS n
+    FROM users WHERE created_at >= ? GROUP BY day
+  `).all(since);
+  return fillDays(rows, days);
+}
+
+function getScansSeries(days) {
+  const since = nowMs() - days * 86400000;
+  const rows = db.prepare(`
+    SELECT strftime('%Y-%m-%d', created_at/1000, 'unixepoch') AS day, COUNT(*) AS n
+    FROM scans WHERE created_at >= ? GROUP BY day
+  `).all(since);
+  return fillDays(rows, days);
+}
+
+function getInteractionsSeries(days, action) {
+  const since = nowMs() - days * 86400000;
+  const rows = db.prepare(`
+    SELECT strftime('%Y-%m-%d', created_at/1000, 'unixepoch') AS day, COUNT(*) AS n
+    FROM interactions WHERE created_at >= ? AND action = ? GROUP BY day
+  `).all(since, action);
+  return fillDays(rows, days);
+}
+
+// Parses companies.cats (JSON array of category slugs) in JS since SQLite
+// has no native JSON array aggregation; folds everything past `limit` into
+// a single "other" bucket rather than a long tail of 1-count categories.
+function getIndustryBreakdown(limit = 8) {
+  const rows = db.prepare(`SELECT cats FROM companies`).all();
+  const counts = new Map();
+  for (const r of rows) {
+    for (const cat of safeJSON(r.cats, [])) {
+      counts.set(cat, (counts.get(cat) || 0) + 1);
+    }
+  }
+  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  const top = sorted.slice(0, limit).map(([cat, n]) => ({ cat, n }));
+  const restTotal = sorted.slice(limit).reduce((s, [, n]) => s + n, 0);
+  if (restTotal > 0) top.push({ cat: 'other', n: restTotal });
+  return top;
+}
+
+function getProviderBreakdown() {
+  return db.prepare(`SELECT provider, COUNT(*) AS n FROM scans GROUP BY provider ORDER BY n DESC`).all();
+}
+
+function getJobSourceBreakdown() {
+  return db.prepare(`
+    SELECT COALESCE(NULLIF(source, ''), 'unknown') AS source, COUNT(*) AS n
+    FROM jobs GROUP BY source ORDER BY n DESC
+  `).all();
+}
+
+function getDataQualityStats() {
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN email IS NOT NULL AND email != '' THEN 1 ELSE 0 END) AS with_email,
+      SUM(CASE WHEN email_verified = 1 THEN 1 ELSE 0 END) AS verified_email,
+      SUM(CASE WHEN team IS NOT NULL AND team != '[]' THEN 1 ELSE 0 END) AS with_team,
+      SUM(CASE WHEN website IS NOT NULL AND website != '' THEN 1 ELSE 0 END) AS with_website
+    FROM companies
+  `).get();
+  const jobsRow = db.prepare(`SELECT COUNT(DISTINCT company_id) AS n FROM jobs`).get();
+  return {
+    total: row.total || 0,
+    with_email: row.with_email || 0,
+    verified_email: row.verified_email || 0,
+    with_team: row.with_team || 0,
+    with_website: row.with_website || 0,
+    with_jobs: jobsRow.n || 0,
+  };
+}
+
+// Buckets job_quality.score (0..1) into the four fixed status tiers so the
+// admin chart can reuse the same reserved status palette as the rest of the
+// product instead of an arbitrary sequential ramp.
+function getQualityBuckets() {
+  const rows = db.prepare(`SELECT score FROM job_quality`).all();
+  const b = { critical: 0, serious: 0, warning: 0, good: 0 };
+  for (const { score } of rows) {
+    if (score < 0.25) b.critical++;
+    else if (score < 0.5) b.serious++;
+    else if (score < 0.75) b.warning++;
+    else b.good++;
+  }
+  return b;
+}
+
+function getAiFitBuckets() {
+  const rows = db.prepare(`SELECT score FROM ai_fit_scores`).all();
+  const b = { critical: 0, serious: 0, warning: 0, good: 0 };
+  for (const { score } of rows) {
+    if (score < 25) b.critical++;
+    else if (score < 50) b.serious++;
+    else if (score < 75) b.warning++;
+    else b.good++;
+  }
+  return b;
+}
+
+function getTopCompaniesByInterest(limit = 8) {
+  return db.prepare(`
+    SELECT c.name AS name, COUNT(*) AS n
+    FROM user_company_status ucs JOIN companies c ON c.id = ucs.company_id
+    WHERE ucs.status IN ('interested', 'applied')
+    GROUP BY ucs.company_id ORDER BY n DESC LIMIT ?
+  `).all(limit);
+}
+
+function getAnalytics(days = 30) {
+  days = Math.max(1, Math.min(90, Number(days) || 30));
+  return {
+    days,
+    signups_series: getSignupsSeries(days),
+    scans_series: getScansSeries(days),
+    applied_series: getInteractionsSeries(days, 'applied'),
+    industries: getIndustryBreakdown(8),
+    providers: getProviderBreakdown(),
+    job_sources: getJobSourceBreakdown(),
+    data_quality: getDataQualityStats(),
+    quality_buckets: getQualityBuckets(),
+    ai_fit_buckets: getAiFitBuckets(),
+    top_companies: getTopCompaniesByInterest(8),
+  };
+}
+
 // One-time repair: local businesses (restaurants, shops) were sometimes tagged
 // ai/marketing from Linktree promos in scraped page text. Re-derive sector tags
 // from name + type only.
@@ -1014,4 +1160,5 @@ module.exports = {
   getStatusCounts,
   getJobQualityStats,
   getAiFitUsageStats,
+  getAnalytics,
 };
