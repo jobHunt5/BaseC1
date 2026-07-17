@@ -1435,8 +1435,14 @@ const App = (() => {
           : `<a class="li-found" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${ic('check')}Verified profile ${ic('external-link', 11, false)}</a>`)
       : `<span class="li-none">No verified LinkedIn</span>
          <a class="li-search-btn" href="${escapeAttr(searchUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Search LinkedIn ${ic('external-link', 11, false)}</a>`;
+    // Scraped titles come from LinkedIn/Google search snippets, not structured
+    // data — they're sometimes a full marketing tagline ("MD @ X | Transforming
+    // Tomorrow, Today") rather than a short role. Cap both fields hard so one
+    // long scrape can't balloon a card's height (and stretch its grid row-mate
+    // into an empty void — CSS grid rows stretch to the tallest cell).
+    const titleText = member.title ? truncate(member.title, 60) : '';
     const bioHTML = member.bio
-      ? `<div class="team-bio">${escapeHtml(member.bio.slice(0, 140))}${member.bio.length > 140 ? '…' : ''}</div>`
+      ? `<div class="team-bio">${escapeHtml(truncate(member.bio, 110))}</div>`
       : '';
     const emailHTML = member.email && emailMatchesWebsite(member.email, c.website)
       ? `<div class="team-email"><a href="mailto:${escapeAttr(member.email)}" onclick="event.stopPropagation()">${escapeHtml(member.email)}</a></div>`
@@ -1450,7 +1456,7 @@ const App = (() => {
         <div class="team-avatar" style="background:hsl(${hue}, 50%, 30%); color:hsl(${hue}, 90%, 88%)">${escapeHtml(initials)}</div>
         <div class="team-info">
           <div class="team-name">${escapeHtml(member.name)}</div>
-          ${member.title ? `<div class="team-title">${escapeHtml(member.title)}</div>` : ''}
+          ${titleText ? `<div class="team-title">${escapeHtml(titleText)}</div>` : ''}
           ${bioHTML}
           ${emailHTML}
           <div class="team-li-row">${linkLabel}</div>
@@ -1693,7 +1699,7 @@ const App = (() => {
     const trust = jobTrustLabel(j.source, j);
 
     const desc = j.description
-      ? `<div class="job-desc">${escapeHtml(j.description)}</div>`
+      ? `<div class="job-desc">${escapeHtml(truncate(j.description, 280))}</div>`
       : '';
 
     const titleHtml = j.url
@@ -2845,6 +2851,17 @@ const App = (() => {
   // naturally before a text label; pass gap:false for icon-only buttons.
   function ic(name, size = 13, gap = true) {
     return `<svg class="ui-icon${gap ? '' : ' no-gap'}" width="${size}" height="${size}"><use href="#icon-${name}"></use></svg>`;
+  }
+
+  // Scraped text (LinkedIn/Google snippets) is free text, not structured data —
+  // cut at the nearest word boundary instead of mid-word so truncation reads
+  // as intentional rather than broken.
+  function truncate(s, max) {
+    const str = String(s || '').trim();
+    if (str.length <= max) return str;
+    const cut = str.slice(0, max);
+    const lastSpace = cut.lastIndexOf(' ');
+    return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trim() + '…';
   }
 
   return {

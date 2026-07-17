@@ -151,8 +151,8 @@ function isTrustedSource(source) {
 // Drop office locations mistaken for people (e.g. "New South Wales" + street address).
 const { isValidTeamMember } = require('./teamTrustService');
 
-function sanitizeTeamMember(m) {
-  if (!m || !isValidTeamMember(m)) return null;
+function sanitizeTeamMember(m, companyName) {
+  if (!m || !isValidTeamMember(m, companyName)) return null;
   const out = { ...m };
   if (out.linkedin_url && !isTrustedSource(out.linkedin_source)) {
     delete out.linkedin_url;
@@ -164,8 +164,8 @@ function sanitizeTeamMember(m) {
   return out;
 }
 
-function sanitizeTeam(team) {
-  return (team || []).map(sanitizeTeamMember).filter(Boolean);
+function sanitizeTeam(team, companyName) {
+  return (team || []).map(m => sanitizeTeamMember(m, companyName)).filter(Boolean);
 }
 
 function parseSerperPersonResult(link, title, snippet, companyName) {
@@ -386,9 +386,9 @@ async function findVerifiedLinkedIn(name, companyName, { address } = {}) {
 }
 
 async function resolveTeamLinkedIn(team, companyName, { limit = 12, linkedinCompanyUrl, address } = {}) {
-  if (!team || !team.length) return sanitizeTeam(team);
+  if (!team || !team.length) return sanitizeTeam(team, companyName);
 
-  let out = sanitizeTeam(team);
+  let out = sanitizeTeam(team, companyName);
 
   // 1. Match against profiles listed on the company's LinkedIn page.
   if (linkedinCompanyUrl) {

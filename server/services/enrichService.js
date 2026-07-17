@@ -260,7 +260,7 @@ async function enrichCompany(company, { mode = 'full' } = {}) {
   result.socials = socials;
   result.description = sanitizeDescription(description, company.name);
   result.all_emails = allEmails;
-  result.team = fast ? [] : sortTeam(Array.from(teamSeen.values()).filter(isValidTeamMember)).slice(0, 12);
+  result.team = fast ? [] : sortTeam(Array.from(teamSeen.values()).filter(m => isValidTeamMember(m, company.name))).slice(0, 12);
   result.extraText = extraText;
   result.fetched = true;
 

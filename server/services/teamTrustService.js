@@ -240,10 +240,33 @@ function looksLikePersonName(name) {
   return caps >= 2;
 }
 
-function isValidTeamMember(member) {
+// A company obviously isn't its own employee — but "HALO Labs" (all-caps
+// first word) passes looksLikePersonName's title-case check same as "Halo
+// Watson" would, since it only requires two capitalised word-like tokens.
+// Comparing directly against the company name being scanned catches this
+// without weakening the general name-shape heuristic for everyone else.
+function normalizeForCompanyCompare(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\b(labs?|inc|llc|ltd|pty|co|corp|corporation|group|studio|studios|agency|solutions|technologies|technology|tech|services|company)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function looksLikeCompanyNameItself(name, companyName) {
+  if (!companyName) return false;
+  const a = normalizeForCompanyCompare(name);
+  const b = normalizeForCompanyCompare(companyName);
+  if (!a || !b) return false;
+  return a === b;
+}
+
+function isValidTeamMember(member, companyName) {
   if (!member?.name) return false;
   const name = String(member.name).trim();
   if (name.length < 4) return false;
+  if (looksLikeCompanyNameItself(name, companyName)) return false;
   if (looksLikeConsentBanner(member)) return false;
   if (!looksLikePersonName(name)) return false;
   if (isPlaceName(name)) return false;
