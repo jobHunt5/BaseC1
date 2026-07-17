@@ -15,7 +15,7 @@ function buildContext(company, profile = {}) {
     companyType: company.type || '',
     address: company.address || '',
     website: company.website || '',
-    description: (company.description || '').slice(0, 400),
+    description: (company.description || '').slice(0, 600),
     opportunities: (company.opportunities || []).slice(0, 4),
     userName: profile.name || '',
     userSkills: (profile.skills || []).join(', '),
@@ -118,7 +118,25 @@ function shortAddr(a) {
   return String(a).split(',').slice(0, 2).join(',').trim();
 }
 
+// Prefers a real line from the company's own scraped description (their
+// actual mission/offering, in their own words) over a generic keyword-
+// matched guess — makes the template fallback feel researched even without
+// an OpenAI key.
 function observationFor(ctx) {
+  // Scraped "About" text often carries a crawler label ("TL;DR:", "About
+  // us:") worth stripping, but trying to grammatically splice the rest into
+  // a continuation sentence is fragile — descriptions start with the company
+  // name ("Acme makes..."), a pronoun ("We help..."), or neither, and
+  // guessing wrong reads broken either way. Quoting the cleaned sentence
+  // verbatim as its own clause sidesteps that entirely.
+  const blurb = (ctx.description || '').trim()
+    .replace(/^\s*(tl;?dr|about( us)?|our story|who we are)\s*:\s*/i, '').trim();
+  if (blurb) {
+    const firstSentence = blurb.split(/(?<=[.!?])\s+/)[0]?.trim().replace(/[.!]$/, '');
+    if (firstSentence && firstSentence.length > 15 && firstSentence.length < 200) {
+      return `they describe their own work as "${firstSentence}" — exactly the kind of thing I'd love to support.`;
+    }
+  }
   const hay = `${(ctx.companyName || '').toLowerCase()} ${(ctx.companyType || '').toLowerCase()}`;
   if (/store|shop|boutique|fashion|clothing|suit|warehouse|jewel/.test(hay)) {
     return 'strong product photography and a clean in-store / online experience often pay back fast for retailers like yours.';
@@ -147,12 +165,16 @@ async function generateAiVariants(company, profile, { count = 4 } = {}) {
 
   const system = `You write short, honest cold outreach emails for freelancers pitching local businesses.
 Return ONLY valid JSON: { "variants": [ { "tone": "warm|direct|creative|value", "label": "2-4 words", "subject": "...", "body": "..." } ] }
-Rules: under 180 words each, no hype, no fake claims, Australian English OK, sign off with the sender's name.`;
+Rules: under 180 words each, no hype, no fake claims, Australian English OK, sign off with the sender's name.
+Every email must reference something SPECIFIC from the company's own description (their actual mission, product,
+or customers as they describe it) rather than a generic compliment — if no usable description is given, reference
+their industry/type instead of inventing detail. Tie the sender's real skills/experience to what that specific
+company appears to need, not a one-size-fits-all pitch.`;
 
   const user = `Generate ${count} different outreach emails to "${ctx.companyName}" (${ctx.companyType}).
 Sender: ${ctx.userName || 'Freelancer'}, skills: ${ctx.userSkills || 'design/dev/marketing'}.
 City: ${ctx.userCity || 'Melbourne'}. Pitch: ${ctx.userPitch || 'none'}.
-Company blurb: ${ctx.description || 'unknown'}.
+Company's own description of themselves (their mission/offering, in their words — reference something concrete from this): ${ctx.description || 'unknown, use their industry instead'}.
 Website: ${ctx.website || 'none'}.
 Each variant must use a different tone and opening.`;
 

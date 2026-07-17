@@ -12,6 +12,7 @@ const adminAuthRoute = require('./routes/adminAuth');
 const { getProvider, getCoverageHint } = require('./services/placesService');
 const { applyToProcessEnv } = require('./services/settingsService');
 const { repairOpportunityTargetClassification, repairBogusScrapedJobs, repairBogusTeamMembers } = require('./db');
+const { warmup: warmupPdfEngine } = require('./services/resumeService');
 
 // Any settings an admin has previously changed override the .env defaults
 // from here on — before anything else touches process.env.
@@ -77,4 +78,5 @@ app.listen(PORT, () => {
   const provider = getProvider();
   console.log(`AreaHunt running on http://localhost:${PORT}`);
   console.log(`Places provider: ${provider}${provider === 'google' && !process.env.GOOGLE_MAPS_API_KEY ? '  (WARNING: no GOOGLE_MAPS_API_KEY set)' : ''}`);
+  warmupPdfEngine();
 });

@@ -61,6 +61,16 @@ const AuthGate = (() => {
       experienceSummary: '',
       certifications: [],
       skills: [],
+      // Resume-only fields — collected in the Profile modal, never in the
+      // onboarding wizard, so the mandatory sign-up flow stays short. A
+      // proper CV needs more structure than the cold-email `pitch`: a
+      // distinct professional summary, a real work timeline, projects,
+      // named links, and languages.
+      summary: '',
+      workHistory: [],
+      projects: [],
+      links: { github: '', linkedin: '', website: '' },
+      languages: [],
       portfolioUrl: '',
       // null = "not yet decided" — Step 5 fills in a sensible default based
       // on the industries picked in Step 2 the first time it's reached, but

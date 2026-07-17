@@ -427,6 +427,111 @@ const App = (() => {
     return out;
   }
 
+  function renderProfileWorkHistory(workHistory = []) {
+    const list = document.getElementById('profWorkList');
+    if (!list) return;
+    const rows = workHistory.length ? workHistory : [{ title: '', company: '', location: '', startDate: '', endDate: '', current: false, description: '' }];
+    list.innerHTML = rows.map((w, idx) => `
+      <div class="prof-work-row" data-idx="${idx}">
+        <input class="form-input" placeholder="Job title" data-field="title" value="${escapeAttr(w.title || '')}" />
+        <input class="form-input" placeholder="Company" data-field="company" value="${escapeAttr(w.company || '')}" />
+        <div class="prof-work-split">
+          <input class="form-input" placeholder="Location" data-field="location" value="${escapeAttr(w.location || '')}" />
+          <input class="form-input" placeholder="Start (e.g. 2022)" data-field="startDate" value="${escapeAttr(w.startDate || '')}" />
+          <input class="form-input" placeholder="End (or blank if current)" data-field="endDate" value="${escapeAttr(w.endDate || '')}" ${w.current ? 'disabled' : ''} />
+        </div>
+        <label class="form-label toggle-row prof-work-current">
+          <input type="checkbox" data-field="current" ${w.current ? 'checked' : ''} />
+          <span>I currently work here</span>
+        </label>
+        <textarea class="form-input" rows="2" placeholder="What you did — 1-2 lines, achievements if you have them" data-field="description">${escapeHtml(w.description || '')}</textarea>
+        ${idx > 0 ? '<button type="button" class="link-btn-small prof-remove-work">Remove</button>' : ''}
+      </div>`).join('');
+    list.querySelectorAll('.prof-remove-work').forEach(btn => {
+      btn.onclick = () => btn.closest('.prof-work-row')?.remove();
+    });
+    list.querySelectorAll('[data-field="current"]').forEach(cb => {
+      cb.onchange = () => {
+        const endInput = cb.closest('.prof-work-row')?.querySelector('[data-field="endDate"]');
+        if (endInput) endInput.disabled = cb.checked;
+      };
+    });
+  }
+
+  function collectProfileWorkHistory() {
+    const out = [];
+    document.querySelectorAll('.prof-work-row').forEach(row => {
+      const entry = {};
+      row.querySelectorAll('[data-field]').forEach(inp => {
+        entry[inp.dataset.field] = inp.type === 'checkbox' ? inp.checked : inp.value.trim();
+      });
+      if (entry.title || entry.company) out.push(entry);
+    });
+    return out;
+  }
+
+  function renderProfileProjects(projects = []) {
+    const list = document.getElementById('profProjectsList');
+    if (!list) return;
+    const rows = projects.length ? projects : [{ name: '', description: '', url: '', tech: '' }];
+    list.innerHTML = rows.map((p, idx) => `
+      <div class="prof-project-row" data-idx="${idx}">
+        <input class="form-input" placeholder="Project name" data-field="name" value="${escapeAttr(p.name || '')}" />
+        <textarea class="form-input" rows="2" placeholder="What it does / your role" data-field="description">${escapeHtml(p.description || '')}</textarea>
+        <div class="prof-work-split">
+          <input class="form-input" placeholder="Tech/tools used" data-field="tech" value="${escapeAttr(p.tech || '')}" />
+          <input class="form-input" placeholder="Link (optional)" data-field="url" value="${escapeAttr(p.url || '')}" />
+        </div>
+        ${idx > 0 ? '<button type="button" class="link-btn-small prof-remove-project">Remove</button>' : ''}
+      </div>`).join('');
+    list.querySelectorAll('.prof-remove-project').forEach(btn => {
+      btn.onclick = () => btn.closest('.prof-project-row')?.remove();
+    });
+  }
+
+  function collectProfileProjects() {
+    const out = [];
+    document.querySelectorAll('.prof-project-row').forEach(row => {
+      const entry = {};
+      row.querySelectorAll('[data-field]').forEach(inp => {
+        entry[inp.dataset.field] = inp.value.trim();
+      });
+      if (entry.name) out.push(entry);
+    });
+    return out;
+  }
+
+  function renderProfileLanguages(languages = []) {
+    const list = document.getElementById('profLanguagesList');
+    if (!list) return;
+    const rows = languages.length ? languages : [{ name: '', level: '' }];
+    list.innerHTML = rows.map((l, idx) => `
+      <div class="prof-lang-row" data-idx="${idx}">
+        <input class="form-input" placeholder="Language" data-field="name" value="${escapeAttr(l.name || '')}" />
+        <select class="form-input" data-field="level">
+          <option value="">Level…</option>
+          ${['Conversational', 'Professional', 'Fluent', 'Native'].map(lvl =>
+            `<option value="${lvl}" ${l.level === lvl ? 'selected' : ''}>${lvl}</option>`).join('')}
+        </select>
+        ${idx > 0 ? '<button type="button" class="link-btn-small prof-remove-lang">Remove</button>' : ''}
+      </div>`).join('');
+    list.querySelectorAll('.prof-remove-lang').forEach(btn => {
+      btn.onclick = () => btn.closest('.prof-lang-row')?.remove();
+    });
+  }
+
+  function collectProfileLanguages() {
+    const out = [];
+    document.querySelectorAll('.prof-lang-row').forEach(row => {
+      const entry = {};
+      row.querySelectorAll('[data-field]').forEach(inp => {
+        entry[inp.dataset.field] = inp.value.trim();
+      });
+      if (entry.name) out.push(entry);
+    });
+    return out;
+  }
+
   function populateProfileForm(p) {
     document.getElementById('profName').value = p.name || '';
     document.getElementById('profCity').value = p.city || '';
@@ -441,6 +546,37 @@ const App = (() => {
     document.getElementById('profExpYears').value = p.experienceYears || '';
     document.getElementById('profCurrentRole').value = p.currentRole || '';
     document.getElementById('profExpSummary').value = p.experienceSummary || '';
+    document.getElementById('profSummary').value = p.summary || '';
+    document.getElementById('profGithub').value = p.links?.github || '';
+    document.getElementById('profLinkedin').value = p.links?.linkedin || '';
+    document.getElementById('profWebsite').value = p.links?.website || '';
+    renderProfileWorkHistory(p.workHistory || []);
+    const addWork = document.getElementById('profAddWork');
+    if (addWork) {
+      addWork.onclick = () => {
+        const work = collectProfileWorkHistory();
+        work.push({ title: '', company: '', location: '', startDate: '', endDate: '', current: false, description: '' });
+        renderProfileWorkHistory(work);
+      };
+    }
+    renderProfileProjects(p.projects || []);
+    const addProject = document.getElementById('profAddProject');
+    if (addProject) {
+      addProject.onclick = () => {
+        const projects = collectProfileProjects();
+        projects.push({ name: '', description: '', url: '', tech: '' });
+        renderProfileProjects(projects);
+      };
+    }
+    renderProfileLanguages(p.languages || []);
+    const addLanguage = document.getElementById('profAddLanguage');
+    if (addLanguage) {
+      addLanguage.onclick = () => {
+        const languages = collectProfileLanguages();
+        languages.push({ name: '', level: '' });
+        renderProfileLanguages(languages);
+      };
+    }
     renderProfileCertifications(p.certifications || []);
     const addCert = document.getElementById('profAddCert');
     if (addCert) {
@@ -485,6 +621,15 @@ const App = (() => {
       currentRole: document.getElementById('profCurrentRole').value.trim(),
       experienceSummary: document.getElementById('profExpSummary').value.trim(),
       certifications: collectProfileCertifications(),
+      summary: document.getElementById('profSummary').value.trim(),
+      workHistory: collectProfileWorkHistory(),
+      projects: collectProfileProjects(),
+      languages: collectProfileLanguages(),
+      links: {
+        github: document.getElementById('profGithub').value.trim(),
+        linkedin: document.getElementById('profLinkedin').value.trim(),
+        website: document.getElementById('profWebsite').value.trim(),
+      },
       skills,
       portfolio: portfolioVal,
       portfolioUrl: portfolioVal,
@@ -554,6 +699,52 @@ const App = (() => {
     }
     renderCompanies();
     if (state.selectedId) openDetail(state.selectedId);
+  }
+
+  async function downloadPdf(url, filename, btn, busyLabel) {
+    const sess = AuthGate.getSession?.();
+    if (!sess?.token) {
+      toast('Sign in first', 'error');
+      return;
+    }
+    const original = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = `<span class="inline-spinner"></span>${busyLabel}`; }
+    try {
+      const resp = await fetch(url, { headers: AuthGate.authHeaders() });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error || 'Could not generate PDF');
+      }
+      const blob = await resp.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
+      toast('Downloaded', 'success');
+    } catch (err) {
+      toast(err.message || 'Could not generate PDF', 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+  }
+
+  function downloadResume() {
+    const btn = document.querySelector('.resume-download-btn');
+    const name = (profile.name || 'resume').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    downloadPdf('/api/profile/resume.pdf', `${name}-resume.pdf`, btn, 'Building…');
+  }
+
+  function downloadCoverLetter(id) {
+    const c = state.companies.find(x => String(x.id) === String(id))
+      || state.pipelineCompanies.find(x => String(x.id) === String(id));
+    const btn = document.getElementById('coverLetterBtn-' + id);
+    const name = (profile.name || 'cover-letter').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    const company = (c?.name || 'company').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    downloadPdf(`/api/companies/${encodeURIComponent(id)}/cover-letter.pdf`, `${name}-cover-letter-${company}.pdf`, btn, 'Writing…');
   }
 
   async function refreshHealth() {
@@ -1986,6 +2177,9 @@ const App = (() => {
                  style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center"
                  onclick="App.markAppliedFromLinkClick('${cid}')">${ic('external-link', 13)}Mail app &amp; mark applied</a>`
             : ''}
+          <button type="button" class="btn btn-outline" id="coverLetterBtn-${cid}" onclick="App.downloadCoverLetter('${cid}')">
+            ${ic('folder', 13)}Cover letter (PDF)
+          </button>
         </div>
         ${sendHint && !canSend ? `<div class="outreach-send-hint">${escapeHtml(sendHint)}</div>` : ''}
         ${!hasEmail && c.careers_url ? `
@@ -2885,6 +3079,7 @@ const App = (() => {
     copy, copyOutreach,
     verifyCompanyEmail, generateOutreachEmails, applyOutreachVariant, sendOutreachEmail,
     openProfile, closeProfile, closeProfileBackdrop, saveProfile, logout,
+    downloadResume, downloadCoverLetter,
     resolveTeamLinkedIn, discoverPeople, reVerifyCompany, toggleMapMode,
     openAccountMenu, resetListControls, loadMoreCompanies,
     checkAiFit, markAppliedFromLinkClick,

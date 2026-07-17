@@ -33,6 +33,8 @@ const {
 } = require('../services/linkedinService');
 const { attachProfile, buildCompanyProfile } = require('../services/companyProfileService');
 const { enqueueDeepScan, runDeepScan, queueStats } = require('../services/deepScanQueue');
+const { renderResumePdf } = require('../services/resumeService');
+const { renderCoverLetterPdf } = require('../services/coverLetterService');
 
 const router = express.Router();
 
@@ -372,6 +374,35 @@ router.post('/companies/:id/send-email', async (req, res) => {
       replyTo: fromEmail,
     });
     res.json({ ok: true, ...result, to: c.email });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// User's own resume, built from their profile — not company-scoped, but
+// lives here since this router already enforces auth and exposes req.user.
+router.get('/profile/resume.pdf', async (req, res) => {
+  try {
+    const pdf = await renderResumePdf({ ...req.user.profile, email: req.user.email });
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', 'attachment; filename="resume.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Cover letter personalised to this one company — AI-written when
+// OPENAI_API_KEY is set (references the company's own scraped description),
+// template fallback otherwise.
+router.get('/companies/:id/cover-letter.pdf', async (req, res) => {
+  const c = getCompany(req.params.id, req.user.id);
+  if (!c) return res.status(404).json({ error: 'not found' });
+  try {
+    const pdf = await renderCoverLetterPdf({ ...req.user.profile, email: req.user.email }, c);
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `attachment; filename="cover-letter-${c.id.replace(/[^a-z0-9]+/gi, '-')}.pdf"`);
+    res.send(pdf);
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

@@ -364,6 +364,26 @@
       <label class="form-label">Key skills</label>
       <input class="form-input" id="profSkills" placeholder="UI/UX, Figma, React…" />
 
+      <div class="profile-section-title">Resume details <span class="label-opt">— used to build your CV</span></div>
+      <label class="form-label">Professional summary</label>
+      <textarea class="form-input" id="profSummary" rows="2" placeholder="2-3 sentences a recruiter reads first — different tone from your outreach pitch below."></textarea>
+      <label class="form-label">Work history <span class="label-opt">(optional)</span></label>
+      <div id="profWorkList"></div>
+      <button type="button" class="btn btn-outline ob-add-btn" id="profAddWork">+ Add role</button>
+      <label class="form-label">Projects <span class="label-opt">(optional)</span></label>
+      <div id="profProjectsList"></div>
+      <button type="button" class="btn btn-outline ob-add-btn" id="profAddProject">+ Add project</button>
+      <label class="form-label">Languages <span class="label-opt">(optional)</span></label>
+      <div id="profLanguagesList"></div>
+      <button type="button" class="btn btn-outline ob-add-btn" id="profAddLanguage">+ Add language</button>
+      <label class="form-label">GitHub <span class="label-opt">(optional)</span></label>
+      <input class="form-input" id="profGithub" type="url" placeholder="https://github.com/you" />
+      <label class="form-label">LinkedIn <span class="label-opt">(optional)</span></label>
+      <input class="form-input" id="profLinkedin" type="url" placeholder="https://linkedin.com/in/you" />
+      <label class="form-label">Website <span class="label-opt">(optional)</span></label>
+      <input class="form-input" id="profWebsite" type="url" placeholder="https://you.com" />
+      <button type="button" class="btn btn-outline resume-download-btn" onclick="App.downloadResume()">Download resume (PDF)</button>
+
       <div class="profile-section-title">Portfolio & outreach</div>
       <label class="form-label">Portfolio / work samples URL</label>
       <input class="form-input" id="profPortfolio" type="url" placeholder="https://yourportfolio.com" />
