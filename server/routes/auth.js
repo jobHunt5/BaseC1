@@ -10,8 +10,22 @@
 const express = require('express');
 const crypto = require('crypto');
 const { upsertUser, getUserByEmail, getUserById, getAllSettings, setSetting } = require('../db');
+const { encrypt } = require('../services/cryptoService');
 
 const router = express.Router();
+
+// The encrypted app password never leaves the server — every response that
+// includes a profile gets this instead of the raw emailAccount object, so
+// the client can render "configured / not configured" without ever seeing
+// (or being able to leak back) the ciphertext.
+function sanitizeProfile(profile) {
+  if (!profile?.emailAccount) return profile;
+  const { email, host, port, appPasswordEnc } = profile.emailAccount;
+  return {
+    ...profile,
+    emailAccount: { email: email || '', host: host || '', port: port || '', configured: !!appPasswordEnc },
+  };
+}
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
@@ -102,7 +116,7 @@ router.post('/login', (req, res) => {
     user: {
       id: user.id,
       email: user.email,
-      profile: user.profile,
+      profile: sanitizeProfile(user.profile),
       onboardingComplete: user.onboardingComplete,
     },
     dummy: true,
@@ -115,7 +129,7 @@ router.get('/me', (req, res) => {
   res.json({
     id: user.id,
     email: user.email,
-    profile: user.profile,
+    profile: sanitizeProfile(user.profile),
     onboardingComplete: user.onboardingComplete,
   });
 });
@@ -129,17 +143,39 @@ router.put('/profile', (req, res) => {
     return res.status(400).json({ error: 'profile object required' });
   }
 
+  // The client sends a plaintext appPassword only when the user actually
+  // typed a new one (the field is always blank on load — see
+  // sanitizeProfile). Encrypt it here and keep the existing encrypted value
+  // when they left it blank, instead of overwriting a saved password with
+  // nothing just because the form re-submitted an empty field.
+  let mergedEmailAccount = user.profile?.emailAccount;
+  if (profile.emailAccount) {
+    const incoming = profile.emailAccount;
+    mergedEmailAccount = {
+      email: incoming.email ?? user.profile?.emailAccount?.email ?? '',
+      host: incoming.host ?? user.profile?.emailAccount?.host ?? '',
+      port: incoming.port ?? user.profile?.emailAccount?.port ?? '',
+      appPasswordEnc: incoming.appPassword
+        ? encrypt(incoming.appPassword)
+        : user.profile?.emailAccount?.appPasswordEnc,
+    };
+  }
+
+  const nextProfile = { ...user.profile, ...profile, email: user.email };
+  if (mergedEmailAccount) nextProfile.emailAccount = mergedEmailAccount;
+  else delete nextProfile.emailAccount;
+
   const updated = upsertUser({
     id: user.id,
     email: user.email,
-    profile: { ...user.profile, ...profile, email: user.email },
+    profile: nextProfile,
     onboardingComplete: onboardingComplete !== undefined ? !!onboardingComplete : user.onboardingComplete,
   });
 
   res.json({
     id: updated.id,
     email: updated.email,
-    profile: updated.profile,
+    profile: sanitizeProfile(updated.profile),
     onboardingComplete: updated.onboardingComplete,
   });
 });

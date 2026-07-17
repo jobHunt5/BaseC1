@@ -389,6 +389,7 @@
       <input class="form-input" id="profPortfolio" type="url" placeholder="https://yourportfolio.com" />
       <label class="form-label toggle-row">
         <input type="checkbox" id="profPortfolioRequired" />
+        <div class="toggle-box"><svg width="12" height="12"><use href="#icon-check"></use></svg></div>
         <span>I usually need a portfolio link when applying</span>
       </label>
       <label class="form-label">Portfolio notes</label>
@@ -397,9 +398,24 @@
       <textarea class="form-input" id="profPitch" rows="2" placeholder="2 sentences about what you do…"></textarea>
       <label class="form-label">Email signature</label>
       <textarea class="form-input" id="profSig" rows="2" placeholder="Name, email, phone"></textarea>
-      <label class="form-label">Your email (for sending outreach)</label>
-      <input class="form-input" id="profSenderEmail" type="email" placeholder="you@example.com" />
-      <p class="form-hint">SMTP must be configured in .env for direct send.</p>
+
+      <div class="profile-section-title">Email account (for sending) <span id="emailAccountStatus" class="label-opt"></span></div>
+      <p class="form-hint">Emails send from your own account, not a shared one — this is what makes them land as genuinely from you instead of looking spoofed.</p>
+      <label class="form-label">Your email address</label>
+      <input class="form-input" id="profEmailAccountEmail" type="email" placeholder="you@gmail.com" />
+      <label class="form-label">App password</label>
+      <input class="form-input" id="profEmailAccountPassword" type="password" placeholder="Paste an app password" autocomplete="off" />
+      <div class="prof-work-split" style="grid-template-columns:1fr 100px">
+        <div>
+          <label class="form-label">SMTP host</label>
+          <input class="form-input" id="profEmailAccountHost" placeholder="smtp.gmail.com" />
+        </div>
+        <div>
+          <label class="form-label">Port</label>
+          <input class="form-input" id="profEmailAccountPort" placeholder="587" />
+        </div>
+      </div>
+      <p class="form-hint">Gmail: turn on 2-Step Verification, then generate one at <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a> — paste the 16-character password above (not your regular Gmail password).</p>
 
       <div class="profile-footer">
         <button class="btn btn-primary" onclick="App.saveProfile()">Save profile</button>

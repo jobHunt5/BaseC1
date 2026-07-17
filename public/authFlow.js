@@ -82,7 +82,7 @@ const AuthGate = (() => {
       portfolioNotes: '',
       pitch: '',
       signature: '',
-      senderEmail: '',
+      emailAccount: null,
       onboardingStep: 1,
     };
   }
@@ -112,7 +112,6 @@ const AuthGate = (() => {
       portfolio: profile.portfolioUrl || profile.portfolio || '',
       pitch: profile.pitch || '',
       signature: profile.signature || profile.name || '',
-      senderEmail: profile.senderEmail || '',
       jobSectors: profile.jobSectors || [],
     };
     try { localStorage.setItem('areahunt.profile.v1', JSON.stringify(legacy)); } catch {}

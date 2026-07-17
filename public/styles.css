@@ -691,6 +691,10 @@ body.view-pipeline .detail-panel {
 .outreach-subject-input:focus { border-color: var(--accent); }
 .outreach-body { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 12px; color: var(--text); resize: vertical; min-height: 160px; font-family: inherit; outline: none; line-height: 1.5; margin-top: 0; }
 .outreach-body:focus { border-color: var(--accent); }
+.outreach-attach-row { display: flex; gap: 18px; margin-top: 10px; flex-wrap: wrap; }
+.outreach-attach-row .toggle-row { font-size: 12px; }
+.outreach-attach-row .toggle-box { width: 16px; height: 16px; border-radius: 4px; }
+.outreach-attach-row input { width: 16px; height: 16px; }
 .outreach-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
 .outreach-actions button, .outreach-actions a.btn { flex: 1; min-width: 100px; padding: 8px; font-size: 12px; }
 .btn-accent-send { background: linear-gradient(145deg, #ff5252, #c62828); color: #fff; border: none; cursor: pointer; border-radius: var(--radius); font-weight: 600; }
@@ -1399,10 +1403,19 @@ body.auth-locked .topbar { filter: blur(2px); pointer-events: none; user-select:
   box-shadow: 0 4px 14px rgba(108, 99, 255, 0.25);
 }
 .chip-opt.on .chip-desc { color: var(--accent2); }
+/* SVG checkmark (matches #icon-check exactly, same round caps/joins as
+   every other icon in the app) baked in as a data URI so this stays a
+   single ::after with no extra markup — a plain-text "✓" glyph here read as
+   a different, slightly-off icon style next to the rest of the UI, and its
+   badge overlapped the chip's own border rather than sitting cleanly above
+   it. The 2px ring in the chip's own background color is what separates
+   the badge from the border now, not raw overlap. */
 .chip-opt.on::after {
-  content: '✓'; position: absolute; top: 50%; right: 12px; transform: translateY(-50%);
-  width: 16px; height: 16px; border-radius: 50%; background: var(--accent);
-  color: #fff; font-size: 9px; font-weight: 900; display: flex; align-items: center; justify-content: center;
+  content: ''; position: absolute; top: 50%; right: 10px; transform: translateY(-50%);
+  width: 18px; height: 18px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(108, 99, 255, 0.15);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='4 12 9 17 20 6'/%3E%3C/svg%3E");
+  background-size: 10px 10px; background-repeat: no-repeat; background-position: center;
 }
 
 /* Industry icon sprite — <svg><use> referencing #icon-<name> symbols

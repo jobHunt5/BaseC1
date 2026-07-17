@@ -35,6 +35,7 @@ const { attachProfile, buildCompanyProfile } = require('../services/companyProfi
 const { enqueueDeepScan, runDeepScan, queueStats } = require('../services/deepScanQueue');
 const { renderResumePdf } = require('../services/resumeService');
 const { renderCoverLetterPdf } = require('../services/coverLetterService');
+const { decrypt: decryptSecret } = require('../services/cryptoService');
 
 const router = express.Router();
 
@@ -339,7 +340,10 @@ router.post('/companies/:id/generate-emails', async (req, res) => {
   }
 });
 
-// Send outreach directly — only to verified company emails.
+// Send outreach directly — only to verified company emails, only through
+// the signed-in user's own sending account (see mailService.js for why:
+// a shared account can't honestly claim to be a different per-user From
+// address without looking like spoofing to the receiving mail server).
 router.post('/companies/:id/send-email', async (req, res) => {
   const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
@@ -350,28 +354,40 @@ router.post('/companies/:id/send-email', async (req, res) => {
     });
   }
 
-  if (!smtpConfigured()) {
+  const ea = req.user.profile?.emailAccount;
+  const account = ea?.appPasswordEnc
+    ? { host: ea.host, port: ea.port, user: ea.email, pass: decryptSecret(ea.appPasswordEnc) }
+    : null;
+
+  if (!smtpConfigured(account)) {
     return res.status(503).json({
-      error: 'SMTP not configured — add SMTP_HOST, SMTP_USER, SMTP_PASS to .env',
+      error: 'Add your sending email account in Profile → Email account before you can send',
     });
   }
 
-  const { subject, body, fromName, fromEmail } = req.body || {};
+  const { subject, body, fromName, attachResume, attachCoverLetter } = req.body || {};
   if (!subject || !body) {
     return res.status(400).json({ error: 'subject and body required' });
   }
-  if (!fromEmail && !process.env.SMTP_FROM) {
-    return res.status(400).json({ error: 'Add your email in Profile → Your email (for sending)' });
-  }
 
   try {
+    const attachments = [];
+    if (attachResume) {
+      attachments.push({ filename: 'resume.pdf', content: await renderResumePdf({ ...req.user.profile, email: req.user.email }) });
+    }
+    if (attachCoverLetter) {
+      attachments.push({ filename: `cover-letter-${c.name.replace(/[^a-z0-9]+/gi, '-')}.pdf`, content: await renderCoverLetterPdf({ ...req.user.profile, email: req.user.email }, c) });
+    }
+
     const result = await sendOutreachEmail({
       to: c.email,
       subject,
       body,
-      fromName: fromName || 'AreaHunt user',
-      fromEmail,
-      replyTo: fromEmail,
+      fromName: fromName || req.user.profile?.name || 'AreaHunt user',
+      fromEmail: ea?.email,
+      replyTo: ea?.email,
+      account,
+      attachments,
     });
     res.json({ ok: true, ...result, to: c.email });
   } catch (err) {

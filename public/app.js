@@ -301,7 +301,7 @@ const App = (() => {
 
   const PROFILE_KEY = 'areahunt.profile.v1';
   let profile = {
-    name: '', skills: [], city: '', portfolio: '', pitch: '', signature: '', senderEmail: '',
+    name: '', skills: [], city: '', portfolio: '', pitch: '', signature: '', emailAccount: null,
   };
   const _outreachVariants = {};
 
@@ -542,7 +542,17 @@ const App = (() => {
     document.getElementById('profPortfolioNotes').value = p.portfolioNotes || '';
     document.getElementById('profPitch').value = p.pitch || '';
     document.getElementById('profSig').value = p.signature || '';
-    document.getElementById('profSenderEmail').value = p.senderEmail || '';
+    document.getElementById('profEmailAccountEmail').value = p.emailAccount?.email || '';
+    document.getElementById('profEmailAccountHost').value = p.emailAccount?.host || 'smtp.gmail.com';
+    document.getElementById('profEmailAccountPort').value = p.emailAccount?.port || '587';
+    // The app password is write-only — never sent back from the server, so
+    // this field always starts blank; a placeholder communicates "already
+    // saved" instead of leaving it looking unset.
+    const pwInput = document.getElementById('profEmailAccountPassword');
+    pwInput.value = '';
+    pwInput.placeholder = p.emailAccount?.configured ? '•••••••••••••••• (saved — leave blank to keep)' : 'Paste an app password';
+    const statusEl = document.getElementById('emailAccountStatus');
+    if (statusEl) statusEl.textContent = p.emailAccount?.configured ? '— connected' : '— not set up yet';
     document.getElementById('profExpYears').value = p.experienceYears || '';
     document.getElementById('profCurrentRole').value = p.currentRole || '';
     document.getElementById('profExpSummary').value = p.experienceSummary || '';
@@ -637,7 +647,12 @@ const App = (() => {
       portfolioNotes: document.getElementById('profPortfolioNotes').value.trim(),
       pitch: document.getElementById('profPitch').value.trim(),
       signature: document.getElementById('profSig').value.trim() || name,
-      senderEmail: document.getElementById('profSenderEmail').value.trim(),
+      emailAccount: {
+        email: document.getElementById('profEmailAccountEmail').value.trim(),
+        host: document.getElementById('profEmailAccountHost').value.trim() || 'smtp.gmail.com',
+        port: document.getElementById('profEmailAccountPort').value.trim() || '587',
+        appPassword: document.getElementById('profEmailAccountPassword').value,
+      },
     };
   }
 
@@ -2134,14 +2149,13 @@ const App = (() => {
           </button>`).join('')
       : '';
 
-    const canSend = verified && hasEmail && profile.senderEmail && state.hasSmtp;
-    const sendHint = !state.hasSmtp
-      ? 'Add SMTP_HOST, SMTP_USER, SMTP_PASS to .env to enable direct send'
-      : !profile.senderEmail
-        ? 'Add your email in Profile to send'
-        : !verified
-          ? 'Verify their email before sending'
-          : '';
+    const hasSendingAccount = !!profile.emailAccount?.configured;
+    const canSend = verified && hasEmail && hasSendingAccount;
+    const sendHint = !hasSendingAccount
+      ? 'Add your sending email account in Profile → Email account before you can send'
+      : !verified
+        ? 'Verify their email before sending'
+        : '';
 
     return `
       <div class="outreach-section" id="outreachSection-${cid}">
@@ -2164,6 +2178,11 @@ const App = (() => {
 
         <label class="outreach-field-label">Message</label>
         <textarea class="outreach-body" id="outreachBody-${cid}">${escapeHtml(body)}</textarea>
+
+        <div class="outreach-attach-row">
+          <label class="toggle-row"><input type="checkbox" id="attachResume-${cid}" checked /><div class="toggle-box">${ic('check', 12, false)}</div><span>Attach resume (PDF)</span></label>
+          <label class="toggle-row"><input type="checkbox" id="attachCoverLetter-${cid}" checked /><div class="toggle-box">${ic('check', 12, false)}</div><span>Attach cover letter (PDF)</span></label>
+        </div>
 
         <div class="outreach-actions">
           <button type="button" class="btn btn-primary" onclick="App.copyOutreach('${cid}')">${ic('admin', 13)}Copy</button>
@@ -2302,8 +2321,8 @@ const App = (() => {
       toast('Verify their email first', 'error');
       return;
     }
-    if (!profile.senderEmail) {
-      toast('Add your email in Profile → Your email (for sending)', 'error');
+    if (!profile.emailAccount?.configured) {
+      toast('Add your sending email account in Profile → Email account', 'error');
       openProfile();
       return;
     }
@@ -2312,7 +2331,10 @@ const App = (() => {
       toast('Subject and message required', 'error');
       return;
     }
-    if (!window.confirm(`Send email to ${c.email}?\n\nSubject: ${subject}`)) return;
+    const attachResume = document.getElementById('attachResume-' + id)?.checked ?? true;
+    const attachCoverLetter = document.getElementById('attachCoverLetter-' + id)?.checked ?? true;
+    const attachNote = [attachResume && 'resume', attachCoverLetter && 'cover letter'].filter(Boolean).join(' + ');
+    if (!window.confirm(`Send email to ${c.email}?\n\nSubject: ${subject}${attachNote ? `\nAttaching: ${attachNote}` : ''}`)) return;
 
     const btn = document.getElementById('sendEmailBtn-' + id);
     if (btn) { btn.disabled = true; btn.innerHTML = '<span class="inline-spinner"></span>Sending…'; }
@@ -2324,7 +2346,8 @@ const App = (() => {
           subject,
           body,
           fromName: profile.name || profile.signature,
-          fromEmail: profile.senderEmail,
+          attachResume,
+          attachCoverLetter,
         }),
       });
       const data = await resp.json();
@@ -2335,7 +2358,7 @@ const App = (() => {
       toast(err.message, 'error');
     } finally {
       if (btn) {
-        btn.disabled = !(isVerifiedEmail(c) && profile.senderEmail && state.hasSmtp);
+        btn.disabled = !(isVerifiedEmail(c) && profile.emailAccount?.configured);
         btn.innerHTML = `${ic('email', 13)}Send email`;
       }
     }
