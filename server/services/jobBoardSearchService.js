@@ -15,6 +15,7 @@ const JOB_BOARDS = [
   { source: 'indeed', site: 'site:au.indeed.com', urlRe: /indeed\.com\/(viewjob|rc\/clk|pagead)/i },
   { source: 'linkedin-jobs', site: 'site:linkedin.com/jobs', urlRe: /linkedin\.com\/jobs\/view/i },
   { source: 'jora', site: 'site:jora.com', urlRe: /jora\.com\/(?:job|j)\//i },
+  { source: 'careerone', site: 'site:careerone.com.au', urlRe: /careerone\.com\.au\/jobview\//i },
 ];
 
 const ROLE_RE = /\b(developer|engineer|designer|manager|lead|architect|analyst|scientist|consultant|specialist|director|intern|coordinator|producer|writer|editor|recruiter|strategist|associate|assistant|advisor|operator|administrator|officer|technician|marketer|programmer|executive|chef|cook|barista|nurse|driver|accountant|lawyer|paralegal|sales|support|customer|receptionist|cleaner|electrician|plumber|teacher|trainer|coach|therapist|physio|dentist|doctor|pharmacist|worker|labourer|laborer|supervisor|foreman|technologist|pathologist|radiographer|midwife|carer|caregiver|host|waiter|waitress|bartender|sous|head of|vp of|chief)\b/i;
@@ -50,7 +51,7 @@ function resultMentionsCompany(companyName, title, snippet) {
 
 function parseJobTitle(serperTitle, companyName) {
   let t = String(serperTitle || '').trim();
-  t = t.replace(/\s*[|\-–—]\s*(Seek\.?com\.?au|Indeed|LinkedIn|Jora|Glassdoor).*$/i, '');
+  t = t.replace(/\s*[|\-–—]\s*(Seek\.?com\.?au|Indeed|LinkedIn|Jora|Glassdoor|CareerOne|Careers Vic).*$/i, '');
   const co = companySearchTerms(companyName).full;
   if (co.length > 3) {
     t = t.replace(new RegExp(`\\s*[|\\-–—]\\s*${co.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*$`, 'i'), '');

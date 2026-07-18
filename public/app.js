@@ -601,6 +601,7 @@ const App = (() => {
     renderProfileChipGroup('profEmployment', formOpts.employmentTypes || [], p.employmentTypes || []);
     renderProfileChipGroup('profWorkMode', formOpts.workModes || [], p.workModes || []);
     renderProfileChipGroup('profTimeCommitment', formOpts.timeCommitment || [], p.timeCommitment ? [p.timeCommitment] : [], { exclusiveSingle: true });
+    renderProfileChipGroup('profWorkRights', formOpts.workRights || [], p.workRights ? [p.workRights] : [], { exclusiveSingle: true });
     renderProfileEducation(p.education || []);
     const addEdu = document.getElementById('profAddEdu');
     if (addEdu) {
@@ -626,6 +627,7 @@ const App = (() => {
       employmentTypes: readProfileChipSelection('profEmployment'),
       workModes: readProfileChipSelection('profWorkMode'),
       timeCommitment: readProfileChipSelection('profTimeCommitment')[0] || '',
+      workRights: readProfileChipSelection('profWorkRights')[0] || '',
       education: collectProfileEducation(),
       experienceYears: document.getElementById('profExpYears').value || '',
       currentRole: document.getElementById('profCurrentRole').value.trim(),
@@ -1056,13 +1058,19 @@ const App = (() => {
   function renderAreaJobsBanner() {
     if (state.view !== 'scan') return '';
     if (state.areaJobsLoading) {
-      return `<div class="area-jobs-banner loading"><span class="inline-spinner"></span>Searching Seek, Indeed, LinkedIn &amp; Jora for more roles in this area…</div>`;
+      return `<div class="area-jobs-banner loading"><span class="inline-spinner"></span>Searching Seek, Indeed, LinkedIn, Jora, CareerOne &amp; Careers Vic for more roles in this area…</div>`;
     }
     if (!state.areaJobs.length) return '';
-    const labels = { seek: 'Seek', indeed: 'Indeed', 'linkedin-jobs': 'LinkedIn', jora: 'Jora' };
+    const labels = { seek: 'Seek', indeed: 'Indeed', 'linkedin-jobs': 'LinkedIn', jora: 'Jora', careerone: 'CareerOne', 'careers-vic': 'Careers Vic' };
+    const needsVisa = ['visa-full', 'visa-limited', 'visa-sponsorship', 'working-holiday'].includes(profile.workRights);
     const rows = state.areaJobs.slice(0, 40).map(j => {
       const src = labels[j.source] || j.source;
       const co = j.company_name ? `<span class="area-job-co">${escapeHtml(j.company_name)}</span>` : '';
+      let visaBadge = '';
+      if (j.visa_flag === 'sponsorship-available') visaBadge = `<span style="color:var(--green)">${ic('check', 12)}Sponsorship mentioned</span>`;
+      else if (needsVisa && (j.visa_flag === 'citizens-only' || j.visa_flag === 'clearance-required')) {
+        visaBadge = `<span style="color:var(--red)">${ic('warning', 12)}${j.visa_flag === 'clearance-required' ? 'Clearance required' : 'Citizens/PR only'}</span>`;
+      }
       return `
         <a class="area-job-row" href="${escapeAttr(j.url)}" target="_blank" rel="noopener">
           <div class="area-job-main">
@@ -1072,6 +1080,7 @@ const App = (() => {
           <div class="area-job-meta">
             ${j.location ? `<span>${ic('pin', 12)}${escapeHtml(j.location)}</span>` : ''}
             ${j.remote ? `<span class="remote">${ic('globe', 12)}Remote</span>` : ''}
+            ${visaBadge}
             <span class="trust-badge board">${escapeHtml(src)}</span>
           </div>
         </a>`;
@@ -1932,6 +1941,13 @@ const App = (() => {
       const txt = days < 0 ? `closed ${-days}d ago` : `closes in ${days}d`;
       meta.push(`<span class="deadline ${cls}" title="Deadline ${new Date(j.closes_at).toLocaleDateString()}">${ic('clock', 12)}${txt}</span>`);
     }
+    if (j.visa_flag === 'sponsorship-available') {
+      meta.push(`<span style="color:var(--green)">${ic('check', 12)}Sponsorship mentioned</span>`);
+    } else if (j.visa_flag === 'citizens-only') {
+      meta.push(`<span style="color:var(--red)">${ic('warning', 12)}Citizens/PR only</span>`);
+    } else if (j.visa_flag === 'clearance-required') {
+      meta.push(`<span style="color:var(--red)">${ic('warning', 12)}Security clearance required</span>`);
+    }
     if (j.source)       meta.push(`<span class="job-source">${escapeHtml(j.source)}</span>`);
     const trust = jobTrustLabel(j.source, j);
 
@@ -1947,6 +1963,14 @@ const App = (() => {
       ? `<div class="job-suspicious-warning">${ic('warning', 13)}This posting has red flags — ${(j.quality_flags || []).map(escapeHtml).join('; ') || 'looks unusual'}. Verify carefully before applying or sharing any details.</div>`
       : '';
 
+    // Only warn when it's actually relevant to THIS user — someone who's a
+    // citizen/PR (or didn't set this in their profile yet) gets no warning
+    // even on a citizens-only posting, since it doesn't affect them.
+    const needsVisa = ['visa-full', 'visa-limited', 'visa-sponsorship', 'working-holiday'].includes(profile.workRights);
+    const visaWarning = needsVisa && (j.visa_flag === 'citizens-only' || j.visa_flag === 'clearance-required')
+      ? `<div class="job-suspicious-warning">${ic('warning', 13)}${j.visa_flag === 'clearance-required' ? 'Requires a security clearance, which effectively means citizens/PR only' : 'Requires Australian citizenship or permanent residency'} — based on your profile, you may not be eligible for this role.</div>`
+      : '';
+
     return `
       <div class="job-row ${j.applied ? 'applied' : ''} ${j.looks_suspicious ? 'is-suspicious' : ''}">
         <input type="checkbox" class="job-checkbox" ${j.applied ? 'checked' : ''} onchange="App.toggleJobApplied(${j.id}, this.checked)" />
@@ -1954,6 +1978,7 @@ const App = (() => {
           <div class="job-title">${titleHtml}</div>
           <div class="job-meta">${meta.join('')}${trust}</div>
           ${suspiciousWarning}
+          ${visaWarning}
           ${desc}
           ${j.url ? `<a class="job-apply-link" href="${escapeAttr(j.url)}" target="_blank" rel="noopener">Open posting ${ic('chevron-right', 12, false)}</a>` : ''}
         </div>

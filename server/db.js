@@ -211,6 +211,7 @@ addColumnIfMissing('companies', 'enrich_depth',  "TEXT DEFAULT 'contact'");
 addColumnIfMissing('scans', 'user_id', 'TEXT');
 addColumnIfMissing('users', 'suspended', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('users', 'password_hash', 'TEXT');
+addColumnIfMissing('jobs', 'visa_flag', 'TEXT');
 addColumnIfMissing('interactions', 'user_id', "TEXT NOT NULL DEFAULT ''");
 db.exec(`CREATE INDEX IF NOT EXISTS idx_interactions_user ON interactions(user_id)`);
 
@@ -748,13 +749,17 @@ function syncJobsForCompany(companyId, jobs, { ok = true, replace = false } = {}
 // currently stored for a company and persists the result. Called right
 // after jobs are synced so a quality score/flags are ready by the time the
 // frontend asks for them — never on the request path itself.
+const setJobVisaFlagStmt = db.prepare(`UPDATE jobs SET visa_flag = ? WHERE id = ?`);
+
 function scoreJobsForCompany(companyId) {
   const { scoreJobQuality } = require('./services/jobQualityService');
+  const { detectVisaFlagForJob } = require('./services/visaDetectionService');
   const company = getCompanyStmt.get(companyId);
   const freshJobs = listJobsForCompanyStmt.all(companyId);
   for (const job of freshJobs) {
     const { score, flags } = scoreJobQuality(job, company);
     setJobQuality(job.id, score, flags);
+    setJobVisaFlagStmt.run(detectVisaFlagForJob(job), job.id);
   }
 }
 

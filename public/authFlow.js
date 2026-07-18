@@ -34,6 +34,20 @@ const AuthGate = (() => {
     { id: 'all-in', label: 'All in', desc: '20+ hrs/week, urgent' },
   ];
 
+  // Core to matching in the Australian market — a huge share of job
+  // postings explicitly require citizenship/PR or say nothing at all about
+  // sponsorship, and a huge share of job seekers here are on a visa. This
+  // is what lets the app flag "you likely can't apply to this one" instead
+  // of surfacing roles indiscriminately.
+  const WORK_RIGHTS_OPTIONS = [
+    { id: 'citizen', label: 'Australian citizen', desc: 'Unrestricted work rights' },
+    { id: 'pr', label: 'Permanent resident', desc: 'Unrestricted work rights' },
+    { id: 'visa-full', label: 'Visa — full work rights', desc: 'e.g. partner, some skilled visas' },
+    { id: 'visa-limited', label: 'Visa — limited hours', desc: 'e.g. student visa' },
+    { id: 'visa-sponsorship', label: 'Need visa sponsorship', desc: 'Employer must sponsor' },
+    { id: 'working-holiday', label: 'Working holiday visa', desc: 'Usually 6 months per employer' },
+  ];
+
   // Industries where a portfolio link is a normal part of applying. Used to
   // pick a sensible default for the "I usually need a portfolio" checkbox in
   // Step 5 instead of defaulting it to checked for every candidate — a chef,
@@ -56,6 +70,7 @@ const AuthGate = (() => {
       employmentTypes: [],
       workModes: [],
       timeCommitment: '',
+      workRights: '',
       education: [],
       experienceYears: '',
       currentRole: '',
@@ -503,11 +518,15 @@ const AuthGate = (() => {
         <label class="form-label">Work mode</label>
         ${chipGroup('obWorkMode', WORK_MODE_OPTIONS, draft.workModes)}
         <label class="form-label">How much time can you invest in job hunting?</label>
-        ${chipGroup('obTimeCommitment', TIME_COMMITMENT_OPTIONS, draft.timeCommitment ? [draft.timeCommitment] : [])}`;
+        ${chipGroup('obTimeCommitment', TIME_COMMITMENT_OPTIONS, draft.timeCommitment ? [draft.timeCommitment] : [])}
+        <label class="form-label">Your work rights in Australia</label>
+        ${chipGroup('obWorkRights', WORK_RIGHTS_OPTIONS, draft.workRights ? [draft.workRights] : [])}
+        <p class="ob-hint">We'll flag roles that need citizenship/PR or don't mention sponsorship, so you don't waste time on ones you're not eligible for.</p>`;
       bindSectorChips();
       bindChipGroup('obEmployment', 'employmentTypes');
       bindChipGroup('obWorkMode', 'workModes');
       bindSingleSelectChip('obTimeCommitment', 'timeCommitment');
+      bindSingleSelectChip('obWorkRights', 'workRights');
     } else if (step === 3) {
       if (!draft.education.length) draft.education = [{ degree: '', field: '', institution: '', year: '' }];
       body.innerHTML = `
@@ -650,6 +669,9 @@ const AuthGate = (() => {
     if (step === 2 && !draft.timeCommitment) {
       return 'Pick how much time you can invest in job hunting';
     }
+    if (step === 2 && !draft.workRights) {
+      return 'Pick your work rights in Australia';
+    }
     if (step === 3) {
       const hasEdu = (draft.education || []).some(e => e.degree || e.institution || e.field);
       if (!hasEdu) {
@@ -782,7 +804,10 @@ const AuthGate = (() => {
   }
 
   function getProfileFormOptions() {
-    return { employmentTypes: EMPLOYMENT_OPTIONS, workModes: WORK_MODE_OPTIONS, timeCommitment: TIME_COMMITMENT_OPTIONS };
+    return {
+      employmentTypes: EMPLOYMENT_OPTIONS, workModes: WORK_MODE_OPTIONS,
+      timeCommitment: TIME_COMMITMENT_OPTIONS, workRights: WORK_RIGHTS_OPTIONS,
+    };
   }
 
   return {

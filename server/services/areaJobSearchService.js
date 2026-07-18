@@ -11,6 +11,7 @@
 
 const axios = require('axios');
 const { serperSearch, isConfigured: serperConfigured } = require('./serperClient');
+const { detectVisaFlag } = require('./visaDetectionService');
 
 const CACHE_TTL_MS = 1000 * 60 * 30;
 const cache = new Map();
@@ -20,6 +21,11 @@ const AREA_JOB_BOARDS = [
   { source: 'indeed', site: 'site:au.indeed.com', urlRe: /indeed\.com\/(viewjob|rc\/clk|pagead|job)/i },
   { source: 'linkedin-jobs', site: 'site:linkedin.com/jobs/view', urlRe: /linkedin\.com\/jobs\/view/i },
   { source: 'jora', site: 'site:jora.com', urlRe: /jora\.com\/(?:job|j)\//i },
+  { source: 'careerone', site: 'site:careerone.com.au/jobview', urlRe: /careerone\.com\.au\/jobview\//i },
+  // Victorian public sector jobs board — government/council roles, which
+  // this app's company-discovery (Google Places) rarely surfaces well, so
+  // it's area-wide only rather than per-company like the commercial boards.
+  { source: 'careers-vic', site: 'site:careers.vic.gov.au', urlRe: /careers\.vic\.gov\.au\/jobtools\/jncustomsearch\.viewFullSingle/i },
 ];
 
 const ROLE_RE = /\b(developer|engineer|designer|manager|lead|architect|analyst|scientist|consultant|specialist|director|intern|coordinator|producer|writer|editor|recruiter|strategist|associate|assistant|advisor|operator|administrator|officer|technician|marketer|programmer|executive|chef|cook|barista|nurse|driver|accountant|lawyer|paralegal|sales|support|customer|receptionist|cleaner|electrician|plumber|teacher|trainer|coach|therapist|physio|dentist|doctor|pharmacist|worker|labourer|laborer|supervisor|foreman|technologist|pathologist|radiographer|midwife|carer|caregiver|host|waiter|waitress|bartender|sous|analyst|administrator|head of|vp of|chief)\b/i;
@@ -49,7 +55,7 @@ async function reverseGeocodeSuburb(bounds) {
 
 function parseTitleCompany(serperTitle) {
   let t = String(serperTitle || '').trim();
-  t = t.replace(/\s*[|\-–—]\s*(Seek\.?com\.?au|Indeed|LinkedIn|Jora|Glassdoor).*$/i, '');
+  t = t.replace(/\s*[|\-–—]\s*(Seek\.?com\.?au|Indeed|LinkedIn|Jora|Glassdoor|CareerOne|Careers Vic).*$/i, '');
 
   // LinkedIn pattern: "Acme hiring Senior Engineer in Melbourne, Victoria…"
   const hiring = t.match(/^(.+?)\s+hiring\s+(.+?)\s+in\s+[A-Z]/i);
@@ -121,6 +127,10 @@ async function searchAreaBoard(board, suburb, state, terms) {
         remote: /\bremote\b/i.test(`${r.title} ${r.snippet}`),
         source: board.source,
         confidence: 'board',
+        // Best-effort only — the search-snippet text is short, so this
+        // often can't tell either way (comes back null), which is the
+        // honest answer, not a false "no requirement" read.
+        visa_flag: detectVisaFlag(`${r.title} ${r.snippet}`),
       });
     }
     await sleep(120);
