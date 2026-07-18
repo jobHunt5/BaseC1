@@ -760,6 +760,20 @@ body.view-pipeline .detail-panel {
 .form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(108, 99, 255, 0.18); }
 .form-input::placeholder { color: #5c5c78; }
 textarea.form-input { resize: vertical; min-height: 60px; line-height: 1.5; }
+/* Native <select> arrows (the OS-drawn spinner-style glyph) don't match the
+   rest of the app's icon system — appearance:none + a drawn chevron instead,
+   same visual language as the sort dropdown's custom arrow. */
+select.form-input {
+  appearance: none; -webkit-appearance: none; cursor: pointer;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238888aa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 15px 15px;
+}
+select.form-input:focus {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236c63ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+}
 
 .apply-big { width: 100%; padding: 10px; background: var(--accent); color: #fff; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; margin-top: 4px; }
 .apply-big:hover { background: #7c74ff; }
