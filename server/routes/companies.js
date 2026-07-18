@@ -36,8 +36,17 @@ const { enqueueDeepScan, runDeepScan, queueStats } = require('../services/deepSc
 const { renderResumePdf } = require('../services/resumeService');
 const { renderCoverLetterPdf } = require('../services/coverLetterService');
 const { decrypt: decryptSecret } = require('../services/cryptoService');
+const { rateLimit, byUser } = require('../services/rateLimit');
 
 const router = express.Router();
+
+// PDF generation spins up a real headless-Chrome render per request —
+// cheap to abuse into a memory/CPU exhaustion DoS without a cap. Sending
+// email and generating AI drafts both cost real money per call (SMTP
+// relay reputation, OpenAI tokens) on top of that.
+const pdfRateLimit = rateLimit({ max: 10, windowMs: 5 * 60 * 1000, keyFn: byUser });
+const sendRateLimit = rateLimit({ max: 20, windowMs: 60 * 60 * 1000, keyFn: byUser });
+const aiDraftRateLimit = rateLimit({ max: 30, windowMs: 60 * 60 * 1000, keyFn: byUser });
 
 // Everything here is a signed-in user's own view of the shared discovery
 // pool (status/notes/rating/applied are private per user — see db.js),
@@ -326,7 +335,7 @@ router.post('/companies/:id/verify-email', async (req, res) => {
 });
 
 // Generate multiple creative outreach drafts (AI if OPENAI_API_KEY set, else templates).
-router.post('/companies/:id/generate-emails', async (req, res) => {
+router.post('/companies/:id/generate-emails', aiDraftRateLimit, async (req, res) => {
   const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
   const profile = req.body?.profile || {};
@@ -344,7 +353,7 @@ router.post('/companies/:id/generate-emails', async (req, res) => {
 // the signed-in user's own sending account (see mailService.js for why:
 // a shared account can't honestly claim to be a different per-user From
 // address without looking like spoofing to the receiving mail server).
-router.post('/companies/:id/send-email', async (req, res) => {
+router.post('/companies/:id/send-email', sendRateLimit, async (req, res) => {
   const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
 
@@ -397,7 +406,7 @@ router.post('/companies/:id/send-email', async (req, res) => {
 
 // User's own resume, built from their profile — not company-scoped, but
 // lives here since this router already enforces auth and exposes req.user.
-router.get('/profile/resume.pdf', async (req, res) => {
+router.get('/profile/resume.pdf', pdfRateLimit, async (req, res) => {
   try {
     const pdf = await renderResumePdf({ ...req.user.profile, email: req.user.email });
     res.set('Content-Type', 'application/pdf');
@@ -411,7 +420,7 @@ router.get('/profile/resume.pdf', async (req, res) => {
 // Cover letter personalised to this one company — AI-written when
 // OPENAI_API_KEY is set (references the company's own scraped description),
 // template fallback otherwise.
-router.get('/companies/:id/cover-letter.pdf', async (req, res) => {
+router.get('/companies/:id/cover-letter.pdf', pdfRateLimit, async (req, res) => {
   const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
   try {

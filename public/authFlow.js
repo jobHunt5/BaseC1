@@ -1,4 +1,5 @@
-// Login gate + multi-step onboarding. Dummy auth — any email + 4+ char password.
+// Login gate + multi-step onboarding. Real email/password auth (server-side
+// scrypt hashing — see server/services/passwordService.js).
 
 const AuthGate = (() => {
   const SESSION_KEY = 'areahunt.session.v1';
@@ -310,7 +311,7 @@ const AuthGate = (() => {
         <div class="auth-logo">Area<span>Hunt</span></div>
         <p>Sign in to save your job hunt, preferences, and applications.</p>
       </div>
-      <div class="auth-demo-note">Preview auth — any email works. Password min 4 chars.</div>
+      <div class="auth-demo-note">New here? Just enter an email and a password (8+ characters) to create your account.</div>
       <label class="form-label">Email</label>
       <input class="form-input" id="loginEmail" type="email" placeholder="you@example.com" autocomplete="username" />
       <label class="form-label">Password</label>

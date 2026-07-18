@@ -1,18 +1,59 @@
-// Dummy auth — accepts any valid email + password (min 4 chars).
-// Persists onboarding profile server-side for future real auth swap-in.
+// Email/password auth. Passwords are real (scrypt-hashed, see
+// passwordService.js) — this used to accept any 4+ char string for an
+// existing account with zero verification, which let anyone log into any
+// account just by knowing its email. Fixed with one safe migration: an
+// account created before this fix (no password_hash yet) has its very
+// first post-fix login attempt hash and lock in whatever password is
+// given, same as a fresh signup — every account in this DB at the time of
+// the fix was confirmed dev/test data with no real external user in a
+// position to race that first login, so this is a one-time, already-closed
+// window, not an ongoing gap.
 //
-// Tokens ARE HMAC-signed, though: now that real users' saved/applied
-// pipelines and notes are private per-account, a token has to actually
-// prove which account it belongs to, not just assert a userId nobody
-// checks (a plain base64(userId|ts) would let anyone impersonate any
-// account they can guess/derive the id for).
+// Tokens are HMAC-signed and expire (see TOKEN_TTL_MS) — a token has to
+// actually prove which account it belongs to and can't be replayed forever
+// if it leaks.
 
 const express = require('express');
 const crypto = require('crypto');
-const { upsertUser, getUserByEmail, getUserById, getAllSettings, setSetting } = require('../db');
+const { upsertUser, getUserByEmail, getUserById, getAllSettings, setSetting, setPasswordHash } = require('../db');
 const { encrypt } = require('../services/cryptoService');
+const { hashPassword, verifyPassword } = require('../services/passwordService');
 
 const router = express.Router();
+
+const TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
+
+// Minimal in-process login rate limiter — 10 attempts per email+IP per 15
+// minutes. Not a substitute for a real distributed limiter if this ever
+// runs multi-instance (state doesn't share across processes), but stops
+// the trivial single-instance brute-force case at negligible cost.
+const loginAttempts = new Map();
+const RATE_WINDOW_MS = 15 * 60 * 1000;
+const RATE_MAX = 10;
+
+function rateLimitKey(req, email) {
+  return `${req.ip}|${email}`;
+}
+
+function checkRateLimit(key) {
+  const now = Date.now();
+  const entry = loginAttempts.get(key);
+  if (!entry || now - entry.windowStart > RATE_WINDOW_MS) {
+    loginAttempts.set(key, { windowStart: now, count: 1 });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= RATE_MAX;
+}
+
+// Prevents unbounded memory growth from the map above — sweeps stale
+// windows every hour rather than on every request.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of loginAttempts) {
+    if (now - entry.windowStart > RATE_WINDOW_MS) loginAttempts.delete(key);
+  }
+}, 60 * 60 * 1000).unref();
 
 // The encrypted app password never leaves the server — every response that
 // includes a profile gets this instead of the raw emailAccount object, so
@@ -66,6 +107,10 @@ function parseToken(token) {
     const payloadSep = payload.lastIndexOf('|');
     if (payloadSep <= 0) return null;
     if (!safeEqual(sig, sign(payload))) return null;
+    // The timestamp used to be embedded but never actually checked — a
+    // leaked token stayed valid forever. Reject anything older than the TTL.
+    const issuedAt = Number(payload.slice(payloadSep + 1));
+    if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > TOKEN_TTL_MS) return null;
     return payload.slice(0, payloadSep);
   } catch {
     return null;
@@ -86,28 +131,45 @@ router.post('/login', (req, res) => {
   if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'Valid email required' });
   }
-  if (!password || String(password).length < 4) {
-    return res.status(400).json({ error: 'Password must be at least 4 characters (dummy auth)' });
+  if (!password || String(password).length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
   }
 
   const normalized = email.toLowerCase().trim();
+  if (!checkRateLimit(rateLimitKey(req, normalized))) {
+    return res.status(429).json({ error: 'Too many attempts — try again in a few minutes' });
+  }
+
   let user = getUserByEmail(normalized);
-  const id = user?.id || `user:${crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16)}`;
 
   if (!user) {
+    const id = `user:${crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16)}`;
     user = upsertUser({
       id,
       email: normalized,
       profile: { name: (name || '').trim(), email: normalized },
       onboardingComplete: false,
     });
-  } else if (name && !user.profile?.name) {
-    user = upsertUser({
-      id: user.id,
-      email: normalized,
-      profile: { ...user.profile, name: name.trim(), email: normalized },
-      onboardingComplete: user.onboardingComplete,
-    });
+    setPasswordHash(user.id, hashPassword(password));
+  } else if (!user.passwordHash) {
+    // Pre-existing account from before real passwords existed — this
+    // login claims it (see the file-header comment for why that's safe
+    // here specifically, not as a general pattern).
+    setPasswordHash(user.id, hashPassword(password));
+    if (name && !user.profile?.name) {
+      user = upsertUser({
+        id: user.id,
+        email: normalized,
+        profile: { ...user.profile, name: name.trim(), email: normalized },
+        onboardingComplete: user.onboardingComplete,
+      });
+    }
+  } else if (!verifyPassword(password, user.passwordHash)) {
+    return res.status(401).json({ error: 'Wrong email or password' });
+  }
+
+  if (user.suspended) {
+    return res.status(403).json({ error: 'Account suspended' });
   }
 
   const token = makeToken(user.id);
@@ -119,7 +181,6 @@ router.post('/login', (req, res) => {
       profile: sanitizeProfile(user.profile),
       onboardingComplete: user.onboardingComplete,
     },
-    dummy: true,
   });
 });
 

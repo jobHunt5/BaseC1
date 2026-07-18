@@ -210,6 +210,7 @@ addColumnIfMissing('companies', 'enrich_error',  'TEXT');
 addColumnIfMissing('companies', 'enrich_depth',  "TEXT DEFAULT 'contact'");
 addColumnIfMissing('scans', 'user_id', 'TEXT');
 addColumnIfMissing('users', 'suspended', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('users', 'password_hash', 'TEXT');
 addColumnIfMissing('interactions', 'user_id', "TEXT NOT NULL DEFAULT ''");
 db.exec(`CREATE INDEX IF NOT EXISTS idx_interactions_user ON interactions(user_id)`);
 
@@ -1049,6 +1050,10 @@ function hydrateUser(row) {
     id: row.id,
     email: row.email,
     profile,
+    // Never exposed to a client — routes must not include this in any
+    // response. Kept on the hydrated object (not a separate lookup) so
+    // auth.js can verify a login in one query instead of two.
+    passwordHash: row.password_hash || null,
     onboardingComplete: !!row.onboarding_complete,
     suspended: !!row.suspended,
     createdAt: row.created_at,
@@ -1073,6 +1078,11 @@ function getUserByEmail(email) {
 
 function getUserById(id) {
   return hydrateUser(getUserByIdStmt.get(id));
+}
+
+const setPasswordHashStmt = db.prepare(`UPDATE users SET password_hash = @password_hash, updated_at = @now WHERE id = @id`);
+function setPasswordHash(userId, hash) {
+  setPasswordHashStmt.run({ id: userId, password_hash: hash, now: nowMs() });
 }
 
 // --- admin: user management ---
@@ -1146,6 +1156,7 @@ module.exports = {
   upsertUser,
   getUserByEmail,
   getUserById,
+  setPasswordHash,
   getAllUsersWithStats,
   setUserSuspended,
   deleteUser,

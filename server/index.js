@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const path = require('path');
 const express = require('express');
+const helmet = require('helmet');
 
 const authRoute = require('./routes/auth');
 const scanRoute = require('./routes/scan');
@@ -22,6 +23,35 @@ const {
 applyToProcessEnv();
 
 const app = express();
+// Render (and most PaaS hosts) put the app behind a reverse proxy — without
+// this, req.ip is the proxy's own address for every request, which quietly
+// breaks IP-based rate limiting (every user collapses into one bucket).
+app.set('trust proxy', 1);
+
+// CSP allows exactly the CDN origins the app actually loads (Leaflet from
+// cdnjs/unpkg, map tiles from cartocdn) plus 'unsafe-inline' scripts — the
+// whole frontend is built on inline onclick="App.x()" handlers, and ripping
+// those out to satisfy a stricter CSP is a real rewrite, not a pre-launch
+// hardening pass. Still meaningfully blocks a script-injection payload from
+// pulling in code from anywhere OTHER than these known origins.
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdnjs.cloudflare.com', 'https://unpkg.com'],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://cdnjs.cloudflare.com', 'https://unpkg.com'],
+      imgSrc: ["'self'", 'data:', 'https://*.basemaps.cartocdn.com', 'https://*.tile.openstreetmap.org'],
+      connectSrc: ["'self'", 'https://nominatim.openstreetmap.org'],
+      fontSrc: ["'self'", 'https://cdnjs.cloudflare.com'],
+      objectSrc: ["'none'"],
+    },
+  },
+  // The admin/user pages don't embed third-party frames of their own and
+  // aren't meant to be embedded either — crossOriginEmbedderPolicy off
+  // avoids breaking the Leaflet tile fetches, which is the one helmet
+  // default that conflicts with this app's actual cross-origin image loads.
+  crossOriginEmbedderPolicy: false,
+}));
 app.use(express.json({ limit: '1mb' }));
 
 // Serve the front end from /public.

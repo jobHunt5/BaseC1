@@ -13,6 +13,33 @@ const { getAllSettings, setSetting } = require('../db');
 
 const router = express.Router();
 
+// Shorter-lived than the regular user token — an admin token can read,
+// suspend, or delete every real account, so it's worth re-authenticating
+// more often than a normal session.
+const ADMIN_TOKEN_TTL_MS = 1000 * 60 * 60 * 12; // 12 hours
+
+const loginAttempts = new Map();
+const RATE_WINDOW_MS = 15 * 60 * 1000;
+const RATE_MAX = 8;
+
+function checkRateLimit(key) {
+  const now = Date.now();
+  const entry = loginAttempts.get(key);
+  if (!entry || now - entry.windowStart > RATE_WINDOW_MS) {
+    loginAttempts.set(key, { windowStart: now, count: 1 });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= RATE_MAX;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of loginAttempts) {
+    if (now - entry.windowStart > RATE_WINDOW_MS) loginAttempts.delete(key);
+  }
+}, 60 * 60 * 1000).unref();
+
 function getAdminAuthSecret() {
   if (process.env.ADMIN_AUTH_SECRET) return process.env.ADMIN_AUTH_SECRET;
   const stored = getAllSettings();
@@ -44,7 +71,12 @@ function isValidAdminToken(token) {
     const parts = raw.split('|');
     if (parts.length !== 3 || parts[0] !== 'admin') return false;
     const [marker, ts, sig] = parts;
-    return safeEqual(sig, sign(`${marker}|${ts}`));
+    if (!safeEqual(sig, sign(`${marker}|${ts}`))) return false;
+    // The timestamp was embedded but never checked — a leaked admin token
+    // (arguably the most dangerous credential in this app) stayed valid
+    // forever. Reject anything past the TTL.
+    const issuedAt = Number(ts);
+    return Number.isFinite(issuedAt) && Date.now() - issuedAt <= ADMIN_TOKEN_TTL_MS;
   } catch {
     return false;
   }
@@ -60,6 +92,9 @@ router.post('/login', (req, res) => {
   const expected = process.env.ADMIN_PASSWORD;
   if (!expected) {
     return res.status(503).json({ error: 'ADMIN_PASSWORD not configured on the server (.env)' });
+  }
+  if (!checkRateLimit(req.ip)) {
+    return res.status(429).json({ error: 'Too many attempts — try again in a few minutes' });
   }
   const { password } = req.body || {};
   if (!password || !safeEqual(password, expected)) {
