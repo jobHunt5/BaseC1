@@ -37,6 +37,7 @@ const { renderResumePdf } = require('../services/resumeService');
 const { renderCoverLetterPdf } = require('../services/coverLetterService');
 const { decrypt: decryptSecret } = require('../services/cryptoService');
 const { rateLimit, byUser } = require('../services/rateLimit');
+const { getGapAnalysis, getRankedSavedCompanies } = require('../services/insightsService');
 
 const router = express.Router();
 
@@ -100,6 +101,14 @@ router.get('/companies/:id', (req, res) => {
   const c = getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
   res.json(withProfile(c, req.user.id));
+});
+
+// Personal job-hunt insights — built entirely from this user's own saved/
+// applied companies and their own profile, see insightsService.js.
+router.get('/insights', (req, res) => {
+  const ranked = getRankedSavedCompanies(req.user.id, 'interested');
+  const gaps = getGapAnalysis(req.user.id, req.user.profile);
+  res.json({ ranked, gaps });
 });
 
 // Unified trust-first profile (jobs, LinkedIn, links, evidence).

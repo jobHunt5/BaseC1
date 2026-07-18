@@ -519,6 +519,9 @@
         <button type="button" class="tab" id="pipeTabApplied" onclick="App.switchPipelineTab('applied')">
           Applied <span class="tab-badge" id="tabApplied">0</span>
         </button>
+        <button type="button" class="tab" id="pipeTabInsights" onclick="App.switchPipelineTab('insights')">
+          Insights
+        </button>
       </div>
       <div class="list-search pipeline-search" id="pipelineSearchWrap">
         <span class="icon"><svg class="ui-icon no-gap" width="15" height="15"><use href="#icon-search"></use></svg></span>
@@ -537,6 +540,7 @@
       </div>
     </div>
     <div class="company-list pipeline-page-list" id="pipelineList"></div>
+    <div class="insights-page hidden" id="pipelineInsights"></div>
   </div>
 </div>
 

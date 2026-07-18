@@ -3041,6 +3041,76 @@ const App = (() => {
     }
   }
 
+  // ---- job-hunt insights (real data only — see insightsService.js) --------
+
+  async function loadInsights() {
+    const el = document.getElementById('pipelineInsights');
+    if (!el) return;
+    el.innerHTML = `<div class="insights-loading"><span class="inline-spinner"></span>Analysing your saved companies and job postings…</div>`;
+    try {
+      const data = await fetch('/api/insights', { headers: AuthGate.authHeaders() }).then(r => r.json());
+      renderInsights(data);
+    } catch {
+      el.innerHTML = `<div class="insights-loading">Could not load insights — try again.</div>`;
+    }
+  }
+
+  function insightBar(label, value, max, color) {
+    const pct = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 2;
+    return `
+      <div class="insight-bar-row">
+        <div class="insight-bar-label">${escapeHtml(label)}</div>
+        <div class="insight-bar-track"><div class="insight-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <div class="insight-bar-value">${value > 0 ? '+' : ''}${Math.round(value * 100)}%</div>
+      </div>`;
+  }
+
+  function renderInsights(data) {
+    const el = document.getElementById('pipelineInsights');
+    if (!el) return;
+    const { ranked, gaps } = data;
+
+    let rankedHtml;
+    if (!ranked.companies.length) {
+      rankedHtml = `<div class="insights-empty">Save a few companies to start seeing which ones you're likely to be the best fit for.</div>`;
+    } else if (!ranked.ready) {
+      rankedHtml = `<div class="insights-empty">Not enough history yet — save, skip, or apply to a few more companies (at least ${ranked.minSamples} of a kind) and this'll start showing real signal instead of a flat list.</div>`;
+    } else {
+      const top = ranked.companies.slice(0, 10);
+      const maxAbs = Math.max(0.1, ...top.map(c => Math.abs(c.learned_score)));
+      rankedHtml = top.map(c => insightBar(
+        c.name, c.learned_score, maxAbs,
+        c.learned_score >= 0 ? 'var(--green)' : 'var(--red)',
+      )).join('');
+      rankedHtml = `<div class="insight-bars">${rankedHtml}</div>
+        <p class="insights-hint">Based on the pattern in your own save/apply/skip history — not a generic score. A positive number means companies like this tend to be ones you follow through on.</p>`;
+    }
+
+    let gapsHtml;
+    if (!gaps.ready) {
+      gapsHtml = `<div class="insights-empty">${escapeHtml(gaps.reason === 'save or apply to a few companies first' ? 'Save or apply to a few companies with job postings first — this looks at what those postings actually ask for.' : 'None of your saved companies have job postings scraped yet — try "Re-scan website" on one, or check back after a deep scan finishes.')}</div>`;
+    } else if (!gaps.gaps.length) {
+      gapsHtml = `<div class="insights-empty">Nothing stands out yet — across ${gaps.jobsAnalyzed} job posting${gaps.jobsAnalyzed === 1 ? '' : 's'} from your ${gaps.companiesAnalyzed} saved/applied compan${gaps.companiesAnalyzed === 1 ? 'y' : 'ies'}, your profile already covers what keeps coming up.</div>`;
+    } else {
+      gapsHtml = gaps.gaps.map(g => `
+        <div class="gap-card">
+          <div class="gap-card-title">${escapeHtml(g.label)}</div>
+          <div class="gap-card-meta">Mentioned in ${g.mentionedIn} of ${g.outOf} of your saved/applied job postings — not reflected in your profile yet.</div>
+          <div class="gap-card-suggestion">${escapeHtml(g.suggestion)}</div>
+        </div>`).join('');
+    }
+
+    el.innerHTML = `
+      <div class="insights-section">
+        <h3>Which saved companies are you most likely to follow through on?</h3>
+        ${rankedHtml}
+      </div>
+      <div class="insights-section">
+        <h3>What keeps coming up that isn't in your profile yet</h3>
+        ${gapsHtml}
+      </div>`;
+  }
+
   function openScanPage() {
     setView('scan');
   }
@@ -3055,7 +3125,14 @@ const App = (() => {
     state.pipelineTab = tab;
     document.getElementById('pipeTabSaved')?.classList.toggle('active', tab === 'interested');
     document.getElementById('pipeTabApplied')?.classList.toggle('active', tab === 'applied');
-    if (!silent) loadPipelineList(tab === 'interested' ? 'interested' : 'applied');
+    document.getElementById('pipeTabInsights')?.classList.toggle('active', tab === 'insights');
+    document.getElementById('pipelineList')?.classList.toggle('hidden', tab === 'insights');
+    document.getElementById('pipelineInsights')?.classList.toggle('hidden', tab !== 'insights');
+    document.getElementById('pipelineSearchWrap')?.classList.toggle('hidden', tab === 'insights');
+    document.getElementById('pipelineSortSelect')?.parentElement?.classList.toggle('hidden', tab === 'insights');
+    if (silent) return;
+    if (tab === 'insights') loadInsights();
+    else loadPipelineList(tab === 'interested' ? 'interested' : 'applied');
   }
 
   function updateStats() {

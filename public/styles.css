@@ -1521,6 +1521,26 @@ body.auth-locked .topbar { filter: blur(2px); pointer-events: none; user-select:
 .pipeline-page-list {
   flex: 1; display: flex; flex-direction: column; overflow-y: auto; padding: 12px 0 24px;
 }
+
+/* Job-hunt insights tab */
+.insights-page { flex: 1; overflow-y: auto; padding: 20px 0 32px; display: flex; flex-direction: column; gap: 28px; max-width: 720px; }
+.insights-loading, .insights-empty { color: var(--muted); font-size: 13px; padding: 16px; text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.insights-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+.insights-hint { font-size: 11.5px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+.insight-bars { display: flex; flex-direction: column; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.insight-bar-row { display: flex; align-items: center; gap: 10px; }
+.insight-bar-label { width: 140px; flex-shrink: 0; font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.insight-bar-track { flex: 1; background: var(--card); border-radius: 10px; height: 16px; position: relative; overflow: hidden; }
+.insight-bar-fill { height: 100%; border-radius: 10px; min-width: 4px; }
+.insight-bar-value { width: 44px; flex-shrink: 0; text-align: right; font-size: 11.5px; font-weight: 600; color: var(--text); }
+.gap-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px; margin-bottom: 10px;
+}
+.gap-card:last-child { margin-bottom: 0; }
+.gap-card-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.gap-card-meta { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+.gap-card-suggestion { font-size: 12px; color: var(--text); margin-top: 8px; line-height: 1.5; padding-top: 8px; border-top: 1px solid var(--border); }
 .pipeline-page-list .company-card {
   margin-bottom: 10px;
   border-radius: 12px;

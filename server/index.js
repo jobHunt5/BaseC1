@@ -39,6 +39,14 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdnjs.cloudflare.com', 'https://unpkg.com'],
+      // Separate from scriptSrc under CSP3 — helmet's default is 'none' for
+      // this one specifically, which silently blocks every inline
+      // onclick="..." attribute in the app (the primary interaction pattern
+      // used almost everywhere) even with scriptSrc allowing 'unsafe-inline'.
+      // Missed in the original pass because the one thing tested by hand
+      // (the login button) happens to use an assigned .onclick property,
+      // not an inline attribute — everything else in the app does.
+      scriptSrcAttr: ["'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'", 'https://cdnjs.cloudflare.com', 'https://unpkg.com'],
       imgSrc: ["'self'", 'data:', 'https://*.basemaps.cartocdn.com', 'https://*.tile.openstreetmap.org'],
       connectSrc: ["'self'", 'https://nominatim.openstreetmap.org'],
