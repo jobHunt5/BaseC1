@@ -52,6 +52,13 @@ app.use(helmet({
       connectSrc: ["'self'", 'https://nominatim.openstreetmap.org'],
       fontSrc: ["'self'", 'https://cdnjs.cloudflare.com'],
       objectSrc: ["'none'"],
+      // Same family of problem as HSTS below — this tells the browser to
+      // rewrite http:// sub-resource requests to https://, which is a
+      // no-op on a real HTTPS deployment but pure risk on local HTTP dev
+      // (no upside, and one less thing to rule out if a similar symptom
+      // ever shows up again). `null` removes the directive from the
+      // generated header entirely instead of using helmet's default.
+      upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null,
     },
   },
   // The admin/user pages don't embed third-party frames of their own and
@@ -59,6 +66,15 @@ app.use(helmet({
   // avoids breaking the Leaflet tile fetches, which is the one helmet
   // default that conflicts with this app's actual cross-origin image loads.
   crossOriginEmbedderPolicy: false,
+  // HSTS tells the BROWSER to remember "always use HTTPS for this host"
+  // for a year, including on plain HTTP responses — sending it from local
+  // dev (no TLS at all) poisons the browser into force-upgrading every
+  // future localhost:PORT request to HTTPS, which goes nowhere and
+  // silently breaks every subsequent asset load (the page loads once,
+  // then CSS/JS fail from then on — exactly this bug). Render terminates
+  // TLS itself in front of the app, so this only needs to be real once
+  // actually deployed.
+  hsts: process.env.NODE_ENV === 'production',
 }));
 app.use(express.json({ limit: '1mb' }));
 
