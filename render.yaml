@@ -3,18 +3,31 @@ services:
     name: areahunt
     runtime: node
     region: oregon
-    plan: free
+    # Starter (paid) + a persistent disk — the free plan's ephemeral
+    # filesystem wipes the SQLite DB (every user account, saved company,
+    # and encrypted email password) on every restart/redeploy.
+    plan: starter
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /api/health
+    disk:
+      name: areahunt-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
+      - key: DATA_DIR
+        value: /var/data
       - key: PLACES_PROVIDER
         value: google
       - key: GOOGLE_MAPS_API_KEY
         sync: false
       - key: SERPER_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ADMIN_PASSWORD
         sync: false
       - key: JOB_SEARCH_TIMEOUT_MS
         value: 6000

@@ -4,7 +4,12 @@ const Database = require('better-sqlite3');
 const { sanitizeTeam } = require('./services/linkedinService');
 const { isBlockedEmail, pickTrustedEmail, sanitizeDescription } = require('./services/trustService');
 
-const DATA_DIR = path.join(__dirname, 'data');
+// Defaults to a folder next to this file (fine for local dev), but must be
+// overridden to a mounted persistent-disk path in production — on a
+// platform with an ephemeral filesystem (e.g. Render without a disk), the
+// default path gets wiped on every restart/redeploy, silently deleting
+// every user account, saved company, and encrypted email password.
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(path.join(DATA_DIR, 'app.db'));
