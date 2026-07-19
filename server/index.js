@@ -1,5 +1,17 @@
 require('dotenv').config();
 
+// Initialized before every other require so Sentry's auto-instrumentation
+// (http, etc.) can hook in as early as possible. Optional — the app runs
+// fine with error reporting simply off when SENTRY_DSN isn't set.
+const Sentry = require('@sentry/node');
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || 'development',
+    tracesSampleRate: 0.1,
+  });
+}
+
 const path = require('path');
 const express = require('express');
 const helmet = require('helmet');
@@ -122,6 +134,8 @@ app.use('/api/ai', aiRoute);
 app.use('/api/admin-auth', adminAuthRoute);
 app.use('/api/admin', adminRoute);
 app.use('/api', companiesRoute);
+
+if (process.env.SENTRY_DSN) Sentry.setupExpressErrorHandler(app);
 
 // Last-resort error handler so the front end never sees a hanging request.
 app.use((err, req, res, _next) => {
