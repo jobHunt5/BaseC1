@@ -44,7 +44,7 @@ async function scoreFit(company, job, profile, userId) {
 
   const hash = profileHash(profile);
   const jobId = job?.id ?? null;
-  const cached = getAiFitScore(userId, company.id, jobId, hash);
+  const cached = await getAiFitScore(userId, company.id, jobId, hash);
   if (cached) return { score: cached.score, reason: cached.reason, cached: true };
 
   const system = `You are a blunt, honest career advisor. Given a candidate's profile and a job/company, judge
@@ -85,7 +85,7 @@ ${job ? `Job: "${job.title}" at ${company.name}\nJob description: ${(job.descrip
     const reason = String(parsed.reason || '').slice(0, 400);
     if (Number.isNaN(score) || !reason) return null;
 
-    setAiFitScore(userId, company.id, jobId, hash, score, reason);
+    await setAiFitScore(userId, company.id, jobId, hash, score, reason);
     return { score, reason, cached: false };
   } catch (err) {
     console.warn('[ai-fit]', err.message);

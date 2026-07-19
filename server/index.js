@@ -12,15 +12,12 @@ const adminRoute = require('./routes/admin');
 const adminAuthRoute = require('./routes/adminAuth');
 const { getProvider, getCoverageHint } = require('./services/placesService');
 const { applyToProcessEnv } = require('./services/settingsService');
-const { repairOpportunityTargetClassification, repairBogusScrapedJobs, repairBogusTeamMembers } = require('./db');
+const db = require('./db');
+const { repairOpportunityTargetClassification, repairBogusScrapedJobs, repairBogusTeamMembers } = db;
 const { warmup: warmupPdfEngine } = require('./services/resumeService');
 const {
   status: serperStatus, getUsageToday: getSerperUsageToday, budgetLimit: getSerperBudgetLimit,
 } = require('./services/serperClient');
-
-// Any settings an admin has previously changed override the .env defaults
-// from here on — before anything else touches process.env.
-applyToProcessEnv();
 
 const app = express();
 // Render (and most PaaS hosts) put the app behind a reverse proxy — without
@@ -132,13 +129,34 @@ app.use((err, req, res, _next) => {
   res.status(500).json({ error: err.message || 'internal error' });
 });
 
-const PORT = parseInt(process.env.PORT || '5174', 10);
-app.listen(PORT, () => {
-  repairOpportunityTargetClassification();
-  repairBogusScrapedJobs();
-  repairBogusTeamMembers();
-  const provider = getProvider();
-  console.log(`AreaHunt running on http://localhost:${PORT}`);
-  console.log(`Places provider: ${provider}${provider === 'google' && !process.env.GOOGLE_MAPS_API_KEY ? '  (WARNING: no GOOGLE_MAPS_API_KEY set)' : ''}`);
-  warmupPdfEngine();
-});
+// Settings the admin has previously changed override the .env defaults from
+// here on — but that requires the settings table to have loaded first,
+// which (against Postgres, unlike the old synchronous better-sqlite3 read)
+// is unavoidably async. Exposed as app.ready so both the real boot path
+// below and the test suite can wait for it before making requests.
+const ready = db.ready.then(() => { applyToProcessEnv(); });
+app.ready = ready;
+
+// Only bind a real listener when run directly (`npm start`) — tests
+// `require` this file to get `app` and bind their own ephemeral port instead,
+// so they never fight the dev server for :5174 or trigger the headless-Chrome
+// PDF-engine warmup.
+if (require.main === module) {
+  const PORT = parseInt(process.env.PORT || '5174', 10);
+  ready.then(() => {
+    app.listen(PORT, () => {
+      const provider = getProvider();
+      console.log(`AreaHunt running on http://localhost:${PORT}`);
+      console.log(`Places provider: ${provider}${provider === 'google' && !process.env.GOOGLE_MAPS_API_KEY ? '  (WARNING: no GOOGLE_MAPS_API_KEY set)' : ''}`);
+      warmupPdfEngine();
+      // One-time data-repair passes — run in the background after the
+      // server is already accepting traffic, same as before; errors here
+      // shouldn't be able to crash the process or block startup.
+      repairOpportunityTargetClassification().catch(err => console.error('[repair]', err));
+      repairBogusScrapedJobs().catch(err => console.error('[repair]', err));
+      repairBogusTeamMembers().catch(err => console.error('[repair]', err));
+    });
+  });
+}
+
+module.exports = app;

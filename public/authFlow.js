@@ -228,6 +228,25 @@ const AuthGate = (() => {
     return data;
   }
 
+  async function apiDeleteAccount(password) {
+    if (!session?.token) return;
+    const resp = await fetch('/api/auth/me', {
+      method: 'DELETE',
+      headers: authHeaders(),
+      body: JSON.stringify({ password }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Could not delete account');
+    return data;
+  }
+
+  async function deleteAccount(password) {
+    await apiDeleteAccount(password);
+    clearSession();
+    setUserChip();
+    showLogin();
+  }
+
   async function apiMe() {
     if (!session?.token) return null;
     const resp = await fetch('/api/auth/me', { headers: authHeaders() });
@@ -332,7 +351,7 @@ const AuthGate = (() => {
       <label class="form-label">Password</label>
       <input class="form-input" id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password" />
       <button class="btn btn-primary auth-submit" id="loginBtn">Sign in</button>
-      <p class="auth-foot">No real accounts yet — this stores your profile locally + on this device’s server DB. We’ll ask for your name and details next.</p>`;
+      <p class="auth-foot">By continuing you agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms</a> and <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>. We'll ask for your name and details next.</p>`;
 
     document.getElementById('loginBtn').onclick = submitLogin;
     document.getElementById('loginPassword').addEventListener('keydown', e => {
@@ -811,7 +830,7 @@ const AuthGate = (() => {
   }
 
   return {
-    boot, logout, reopenOnboarding, getSession, getProfile, isLoggedIn, showLogin,
+    boot, logout, deleteAccount, reopenOnboarding, getSession, getProfile, isLoggedIn, showLogin,
     saveProfileToServer, refreshProfile, profileNeedsOnboarding, getProfileFormOptions,
     authHeaders,
   };

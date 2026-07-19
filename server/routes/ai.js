@@ -21,16 +21,16 @@ router.post('/fit-score', async (req, res) => {
     return res.json({ available: false, message: 'OPENAI_API_KEY not configured' });
   }
 
-  const user = getUserFromRequest(req);
+  const user = await getUserFromRequest(req);
   if (!user) return res.status(401).json({ error: 'Not signed in' });
 
   const { company_id, job_id } = req.body || {};
-  const company = getCompany(company_id, user.id);
+  const company = await getCompany(company_id, user.id);
   if (!company) return res.status(404).json({ error: 'company not found' });
 
   let job = null;
   if (job_id != null) {
-    job = getJob(job_id, user.id);
+    job = await getJob(job_id, user.id);
     if (!job || job.company_id !== company_id) {
       return res.status(400).json({ error: 'job does not belong to this company' });
     }

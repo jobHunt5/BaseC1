@@ -43,12 +43,12 @@ async function pump() {
 }
 
 async function runDeepScan(companyId) {
-  const c = getCompany(companyId);
+  const c = await getCompany(companyId);
   if (!c?.website) return;
 
   const enriched = await enrichCompany(c, { mode: 'full' });
   if (!enriched.fetched) {
-    updateEnrichment(c.id, {
+    await updateEnrichment(c.id, {
       fetched: false,
       fetch_error: enriched.fetch_error || 'Could not reach website',
     });
@@ -57,7 +57,7 @@ async function runDeepScan(companyId) {
 
   const cls = classify({ name: c.name, type: c.type, extraText: enriched.extraText });
   const opps = inferOpportunities({ name: c.name, type: c.type });
-  upsertCompany({ ...c, ...cls, opportunities: opps.length ? opps : c.opportunities || [] });
+  await upsertCompany({ ...c, ...cls, opportunities: opps.length ? opps : c.opportunities || [] });
 
   let team = sanitizeTeam(enriched.team || []);
   team = team.map(m => ({
@@ -83,13 +83,13 @@ async function runDeepScan(companyId) {
   }
   enriched.team = team;
   enriched.enrich_depth = 'full';
-  updateEnrichment(c.id, enriched);
+  await updateEnrichment(c.id, enriched);
 
-  const refreshed = getCompany(c.id);
+  const refreshed = await getCompany(c.id);
   if (refreshed.careers_url || refreshed.website) {
     try {
       const jobs = await findJobsForCompany(refreshed, { external: true });
-      syncJobsForCompany(c.id, jobs, { ok: true, replace: true });
+      await syncJobsForCompany(c.id, jobs, { ok: true, replace: true });
     } catch (jobErr) {
       console.warn('[deep-scan] jobs failed:', c.name, jobErr.message);
     }

@@ -6,3 +6,4 @@ server/data/*.db-wal
 .env
 .DS_Store
 *.log
+supabase/.temp/

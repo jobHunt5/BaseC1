@@ -30,13 +30,16 @@ router.use((req, res, next) => {
   next();
 });
 
-router.get('/stats', (req, res) => {
+router.get('/stats', async (req, res) => {
+  const [scans, pipeline, jobQuality, aiFit, users] = await Promise.all([
+    getScanStats(), getStatusCounts(), getJobQualityStats(), getAiFitUsageStats(), getAllUsersWithStats(),
+  ]);
   res.json({
-    scans: getScanStats(),
-    pipeline: getStatusCounts(),
-    job_quality: getJobQualityStats(),
-    ai_fit: getAiFitUsageStats(),
-    user_count: getAllUsersWithStats().length,
+    scans,
+    pipeline,
+    job_quality: jobQuality,
+    ai_fit: aiFit,
+    user_count: users.length,
     config: {
       places_provider: process.env.PLACES_PROVIDER || 'osm',
       has_google_key: !!process.env.GOOGLE_MAPS_API_KEY,
@@ -51,8 +54,8 @@ router.get('/stats', (req, res) => {
   });
 });
 
-router.get('/analytics', (req, res) => {
-  res.json(getAnalytics(req.query.days));
+router.get('/analytics', async (req, res) => {
+  res.json(await getAnalytics(req.query.days));
 });
 
 router.get('/settings', (req, res) => {
@@ -70,29 +73,29 @@ router.put('/settings', (req, res) => {
   }
 });
 
-router.get('/users', (req, res) => {
-  res.json({ users: getAllUsersWithStats() });
+router.get('/users', async (req, res) => {
+  res.json({ users: await getAllUsersWithStats() });
 });
 
-router.get('/users/:id', (req, res) => {
-  const user = getUserById(req.params.id);
+router.get('/users/:id', async (req, res) => {
+  const user = await getUserById(req.params.id);
   if (!user) return res.status(404).json({ error: 'not found' });
-  res.json({ user, learning: getLearningStats(user.id) });
+  res.json({ user, learning: await getLearningStats(user.id) });
 });
 
-router.patch('/users/:id', (req, res) => {
-  const user = getUserById(req.params.id);
+router.patch('/users/:id', async (req, res) => {
+  const user = await getUserById(req.params.id);
   if (!user) return res.status(404).json({ error: 'not found' });
   const { suspended } = req.body || {};
   if (suspended === undefined) return res.status(400).json({ error: 'suspended required' });
-  setUserSuspended(user.id, !!suspended);
-  res.json({ user: getUserById(user.id) });
+  await setUserSuspended(user.id, !!suspended);
+  res.json({ user: await getUserById(user.id) });
 });
 
-router.delete('/users/:id', (req, res) => {
-  const user = getUserById(req.params.id);
+router.delete('/users/:id', async (req, res) => {
+  const user = await getUserById(req.params.id);
   if (!user) return res.status(404).json({ error: 'not found' });
-  deleteUser(user.id);
+  await deleteUser(user.id);
   res.json({ ok: true });
 });
 

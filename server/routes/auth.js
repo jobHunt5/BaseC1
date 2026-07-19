@@ -15,7 +15,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
-const { upsertUser, getUserByEmail, getUserById, getAllSettings, setSetting, setPasswordHash } = require('../db');
+const { upsertUser, getUserByEmail, getUserById, getAllSettings, setSetting, setPasswordHash, deleteUser } = require('../db');
 const { encrypt } = require('../services/cryptoService');
 const { hashPassword, verifyPassword } = require('../services/passwordService');
 
@@ -117,7 +117,7 @@ function parseToken(token) {
   }
 }
 
-function getUserFromRequest(req) {
+async function getUserFromRequest(req) {
   const auth = req.headers.authorization || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : req.query.token;
   if (!token) return null;
@@ -126,7 +126,7 @@ function getUserFromRequest(req) {
   return getUserById(userId);
 }
 
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { email, password, name } = req.body || {};
   if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'Valid email required' });
@@ -140,24 +140,24 @@ router.post('/login', (req, res) => {
     return res.status(429).json({ error: 'Too many attempts — try again in a few minutes' });
   }
 
-  let user = getUserByEmail(normalized);
+  let user = await getUserByEmail(normalized);
 
   if (!user) {
     const id = `user:${crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16)}`;
-    user = upsertUser({
+    user = await upsertUser({
       id,
       email: normalized,
       profile: { name: (name || '').trim(), email: normalized },
       onboardingComplete: false,
     });
-    setPasswordHash(user.id, hashPassword(password));
+    await setPasswordHash(user.id, hashPassword(password));
   } else if (!user.passwordHash) {
     // Pre-existing account from before real passwords existed — this
     // login claims it (see the file-header comment for why that's safe
     // here specifically, not as a general pattern).
-    setPasswordHash(user.id, hashPassword(password));
+    await setPasswordHash(user.id, hashPassword(password));
     if (name && !user.profile?.name) {
-      user = upsertUser({
+      user = await upsertUser({
         id: user.id,
         email: normalized,
         profile: { ...user.profile, name: name.trim(), email: normalized },
@@ -184,8 +184,8 @@ router.post('/login', (req, res) => {
   });
 });
 
-router.get('/me', (req, res) => {
-  const user = getUserFromRequest(req);
+router.get('/me', async (req, res) => {
+  const user = await getUserFromRequest(req);
   if (!user) return res.status(401).json({ error: 'Not signed in' });
   res.json({
     id: user.id,
@@ -195,8 +195,8 @@ router.get('/me', (req, res) => {
   });
 });
 
-router.put('/profile', (req, res) => {
-  const user = getUserFromRequest(req);
+router.put('/profile', async (req, res) => {
+  const user = await getUserFromRequest(req);
   if (!user) return res.status(401).json({ error: 'Not signed in' });
 
   const { profile, onboardingComplete } = req.body || {};
@@ -226,7 +226,7 @@ router.put('/profile', (req, res) => {
   if (mergedEmailAccount) nextProfile.emailAccount = mergedEmailAccount;
   else delete nextProfile.emailAccount;
 
-  const updated = upsertUser({
+  const updated = await upsertUser({
     id: user.id,
     email: user.email,
     profile: nextProfile,
@@ -239,6 +239,22 @@ router.put('/profile', (req, res) => {
     profile: sanitizeProfile(updated.profile),
     onboardingComplete: updated.onboardingComplete,
   });
+});
+
+// Requires the current password as re-confirmation — a bearer token alone
+// (e.g. left signed in on a shared device) shouldn't be enough to
+// permanently destroy an account.
+router.delete('/me', async (req, res) => {
+  const user = await getUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+
+  const { password } = req.body || {};
+  if (user.passwordHash && !verifyPassword(password, user.passwordHash)) {
+    return res.status(401).json({ error: 'Wrong password' });
+  }
+
+  await deleteUser(user.id);
+  res.json({ deleted: true });
 });
 
 module.exports = router;

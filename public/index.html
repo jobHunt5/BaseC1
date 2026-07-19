@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AreaHunt – Local Job Scanner</title>
+<meta name="description" content="Draw an area on the map and AreaHunt finds every company in it, digs up their careers page and contact, and pulls real job listings — so you can build a targeted application list instead of scrolling job boards.">
+<meta property="og:title" content="AreaHunt – Local Job Scanner">
+<meta property="og:description" content="Draw an area on the map and AreaHunt finds every company in it, digs up their careers page and contact, and pulls real job listings.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
@@ -427,6 +432,11 @@
         <button class="btn btn-primary" onclick="App.saveProfile()">Save profile</button>
         <button class="btn btn-outline" onclick="App.closeProfile()">Cancel</button>
         <button class="btn btn-outline profile-signout" onclick="App.logout()">Sign out</button>
+      </div>
+      <div class="profile-danger-zone">
+        <div class="profile-section-title">Danger zone</div>
+        <p class="form-hint">Permanently deletes your account, saved companies, notes, ratings, and applied history. This cannot be undone.</p>
+        <button class="btn btn-danger" onclick="App.deleteAccount()">Delete account</button>
       </div>
     </div>
   </div>

@@ -9,7 +9,7 @@ const {
   buildCompanyLinks,
   buildTrustSummary,
 } = require('./trustService');
-const { listJobsForCompany, getJobQualityForCompany } = require('../db');
+const { listJobsForCompany, getJobQualityForCompany, getLearnedWeights } = require('../db');
 const { scoreCompanyByLearning } = require('./matchLearningService');
 
 const BOARD_SOURCES = new Set(['seek', 'indeed', 'linkedin-jobs', 'jora']);
@@ -56,11 +56,14 @@ function buildMemberSearchUrl(name, company) {
 }
 
 /**
- * Build the full profile payload for one company.
+ * Build the full profile payload for one company. `learnedWeights`, if
+ * provided, is a pre-fetched result of db.getLearnedWeights(userId) — the
+ * same value for every company in a batch, so bulk callers (see
+ * attachProfiles below) fetch it once instead of once per company.
  */
-function buildCompanyProfile(company, jobs = null, userId = null) {
-  const qualityByJobId = new Map(getJobQualityForCompany(company.id).map(q => [q.job_id, q]));
-  const jobRows = (jobs || listJobsForCompany(company.id, userId)).map(j => enrichJobRow(j, qualityByJobId));
+async function buildCompanyProfile(company, jobs = null, userId = null, learnedWeights = null) {
+  const qualityByJobId = new Map((await getJobQualityForCompany(company.id)).map(q => [q.job_id, q]));
+  const jobRows = (jobs || await listJobsForCompany(company.id, userId)).map(j => enrichJobRow(j, qualityByJobId));
   const websiteJobs = jobRows.filter(j => !j.is_board_listing);
   const boardJobs = jobRows.filter(j => j.is_board_listing);
   const verifiedJobs = jobRows.filter(j => j.is_verified);
@@ -80,7 +83,7 @@ function buildCompanyProfile(company, jobs = null, userId = null) {
     trust,
     // Behaviour-learning boost: -1 (you tend to skip companies like this)
     // to +1 (you tend to save/apply). 0 until there's enough history.
-    learned_score: scoreCompanyByLearning(company, null, userId),
+    learned_score: await scoreCompanyByLearning(company, learnedWeights, userId),
     suspicious_job_count: suspiciousJobs.length,
     contact: {
       email: company.email || null,
@@ -112,8 +115,8 @@ function buildCompanyProfile(company, jobs = null, userId = null) {
   };
 }
 
-function attachProfile(company, jobs = null, userId = null) {
-  const profile = buildCompanyProfile(company, jobs, userId);
+async function attachProfile(company, jobs = null, userId = null, learnedWeights = null) {
+  const profile = await buildCompanyProfile(company, jobs, userId, learnedWeights);
   return {
     ...company,
     jobs: profile.jobs,
@@ -121,9 +124,19 @@ function attachProfile(company, jobs = null, userId = null) {
   };
 }
 
+// Bulk version — fetches the user's learned weights once (same value for
+// every company) instead of once per company, then builds profiles in
+// parallel. `jobsMap` is a Map of company.id -> jobs[] (see db.jobsGroupedFor).
+async function attachProfiles(companies, jobsMap, userId = null) {
+  if (!companies.length) return [];
+  const learnedWeights = await getLearnedWeights(userId);
+  return Promise.all(companies.map(c => attachProfile(c, jobsMap.get(c.id) || [], userId, learnedWeights)));
+}
+
 module.exports = {
   buildCompanyProfile,
   attachProfile,
+  attachProfiles,
   enrichJobRow,
   enrichTeamMember,
 };

@@ -218,6 +218,19 @@ const App = (() => {
     AuthGate.logout();
   }
 
+  async function deleteAccount() {
+    if (!window.confirm('Permanently delete your account, saved companies, notes, ratings, and applied history? This cannot be undone.')) return;
+    const password = window.prompt('Enter your password to confirm:');
+    if (password == null) return;
+    try {
+      await AuthGate.deleteAccount(password);
+      closeProfile();
+      toast('Account deleted', 'success');
+    } catch (err) {
+      toast('Could not delete account: ' + (err.message || 'try again'), 'error');
+    }
+  }
+
   function syncMapModeBtn() {
     const btn = document.getElementById('mapModeBtn');
     if (!btn) return;
@@ -3224,7 +3237,7 @@ const App = (() => {
     toggleStatus, toggleJobApplied, setRating, saveNotes, refreshJobs,
     copy, copyOutreach,
     verifyCompanyEmail, generateOutreachEmails, applyOutreachVariant, sendOutreachEmail,
-    openProfile, closeProfile, closeProfileBackdrop, saveProfile, logout,
+    openProfile, closeProfile, closeProfileBackdrop, saveProfile, logout, deleteAccount,
     downloadResume, downloadCoverLetter,
     resolveTeamLinkedIn, discoverPeople, reVerifyCompany, toggleMapMode,
     openAccountMenu, resetListControls, loadMoreCompanies,

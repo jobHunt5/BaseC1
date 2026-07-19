@@ -76,25 +76,25 @@ function profileText(profile) {
 // Only the jobs a user has actually shown real interest in (saved or
 // applied) — job postings they haven't touched yet aren't a signal about
 // what THEY need, just noise from the wider discovery pool.
-function collectInterestedJobText(userId) {
+async function collectInterestedJobText(userId) {
   const companies = [
-    ...listCompaniesByPipeline('interested', userId),
-    ...listCompaniesByPipeline('applied', userId),
+    ...await listCompaniesByPipeline('interested', userId),
+    ...await listCompaniesByPipeline('applied', userId),
   ];
   const seen = new Set();
   const jobs = [];
   for (const c of companies) {
     if (seen.has(c.id)) continue;
     seen.add(c.id);
-    for (const j of listJobsForCompany(c.id, userId)) {
+    for (const j of await listJobsForCompany(c.id, userId)) {
       jobs.push(`${j.title || ''} ${j.description || ''}`);
     }
   }
   return { jobTexts: jobs, companyCount: companies.length };
 }
 
-function getGapAnalysis(userId, profile) {
-  const { jobTexts, companyCount } = collectInterestedJobText(userId);
+async function getGapAnalysis(userId, profile) {
+  const { jobTexts, companyCount } = await collectInterestedJobText(userId);
   const pText = profileText(profile || {});
   const hasCerts = !!(profile?.certifications || []).length;
 
@@ -120,14 +120,14 @@ function getGapAnalysis(userId, profile) {
   return { ready: true, gaps, jobsAnalyzed: jobTexts.length, companiesAnalyzed: companyCount };
 }
 
-function getRankedSavedCompanies(userId, kind = 'interested') {
-  const companies = listCompaniesByPipeline(kind, userId);
-  const stats = getLearningStats(userId);
-  const ranked = companies.map(c => ({
+async function getRankedSavedCompanies(userId, kind = 'interested') {
+  const companies = await listCompaniesByPipeline(kind, userId);
+  const stats = await getLearningStats(userId);
+  const ranked = await Promise.all(companies.map(async c => ({
     id: c.id,
     name: c.name,
-    learned_score: scoreCompanyByLearning(c, null, userId),
-  }));
+    learned_score: await scoreCompanyByLearning(c, null, userId),
+  })));
   ranked.sort((a, b) => b.learned_score - a.learned_score);
   return {
     ready: stats.confident_features > 0,
