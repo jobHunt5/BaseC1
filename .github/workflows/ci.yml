@@ -19,3 +19,4 @@ jobs:
       - run: npm test
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
