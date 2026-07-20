@@ -362,11 +362,29 @@ router.post('/companies/:id/generate-emails', aiDraftRateLimit, async (req, res)
 // the signed-in user's own sending account (see mailService.js for why:
 // a shared account can't honestly claim to be a different per-user From
 // address without looking like spoofing to the receiving mail server).
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 router.post('/companies/:id/send-email', sendRateLimit, async (req, res) => {
   const c = await getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
 
-  if (!c.email_verified || !c.email) {
+  // A manually-typed "to" (the user correcting a wrong auto-detected
+  // address, or supplying one we never found) is trusted on the user's own
+  // say-so — it skips the scrape/DNS verification gate that the
+  // auto-detected c.email otherwise needs, same as clicking a mailto link
+  // manually already implicitly trusts whatever's typed there. Persisted
+  // back onto the company (unverified) so the correction sticks next time.
+  const { subject, body, fromName, attachResume, attachCoverLetter, to } = req.body || {};
+  let sendTo = c.email;
+  if (to && String(to).trim()) {
+    sendTo = String(to).trim();
+    if (!EMAIL_RE.test(sendTo)) {
+      return res.status(400).json({ error: 'That doesn\'t look like a valid email address' });
+    }
+    if (sendTo.toLowerCase() !== (c.email || '').toLowerCase()) {
+      await setCompanyEmail(c.id, { email: sendTo, email_source: 'user_edited', email_verified: false });
+    }
+  } else if (!c.email_verified || !c.email) {
     return res.status(400).json({
       error: 'Email not verified — run Verify email before sending.',
     });
@@ -383,7 +401,6 @@ router.post('/companies/:id/send-email', sendRateLimit, async (req, res) => {
     });
   }
 
-  const { subject, body, fromName, attachResume, attachCoverLetter } = req.body || {};
   if (!subject || !body) {
     return res.status(400).json({ error: 'subject and body required' });
   }
@@ -398,7 +415,7 @@ router.post('/companies/:id/send-email', sendRateLimit, async (req, res) => {
     }
 
     const result = await sendOutreachEmail({
-      to: c.email,
+      to: sendTo,
       subject,
       body,
       fromName: fromName || req.user.profile?.name || 'AreaHunt user',
@@ -407,7 +424,7 @@ router.post('/companies/:id/send-email', sendRateLimit, async (req, res) => {
       account,
       attachments,
     });
-    res.json({ ok: true, ...result, to: c.email });
+    res.json({ ok: true, ...result, to: sendTo });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

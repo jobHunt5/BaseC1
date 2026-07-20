@@ -1750,24 +1750,6 @@ const App = (() => {
       </${Tag}>`;
   }
 
-  function renderLinkedInSection(c) {
-    const li = c.profile?.linkedin || {};
-    const peopleSearch = linkedinPeopleSearchUrl(c);
-    const verifiedBlock = li.verified && li.company_url
-      ? `<a class="linkedin-verified-link" href="${escapeAttr(li.company_url)}" target="_blank" rel="noopener">${ic('check')}${escapeHtml(li.status_label)} ${ic('external-link', 11, false)}</a>
-         ${li.people_url ? `<a class="mini-btn mini-btn-link" href="${escapeAttr(li.people_url)}" target="_blank" rel="noopener">Browse employees on LinkedIn ${ic('external-link', 11, false)}</a>` : ''}`
-      : `<div class="linkedin-none-badge">${escapeHtml(li.status_label || 'No verified LinkedIn found')}</div>
-         <div class="section-note">${escapeHtml(li.message || 'We only show a direct company LinkedIn link when it appears on their website.')}</div>`;
-  return `
-      <div class="detail-section linkedin-section">
-        <div class="detail-label">LinkedIn</div>
-        ${verifiedBlock}
-        <div class="linkedin-search-row">
-          <a class="mini-btn mini-btn-link" href="${escapeAttr(peopleSearch)}" target="_blank" rel="noopener">Search people at ${escapeHtml(c.name)} on LinkedIn ${ic('external-link', 11, false)}</a>
-        </div>
-      </div>`;
-  }
-
   function renderCompanyLinksSection(c) {
     const links = c.profile?.links || [];
     if (!links.length) return '';
@@ -2223,14 +2205,11 @@ const App = (() => {
     const body = buildOutreachBody(c);
     const variants = _outreachVariants[c.id] || [];
 
-    let toLine;
-    if (verified && c.email) {
-      toLine = `<span class="email-ok">${ic('check', 12)}${escapeHtml(c.email)}</span>`;
-    } else if (c.email) {
-      toLine = `${escapeHtml(c.email)} <span class="email-warn">(not verified)</span>`;
-    } else {
-      toLine = '<span class="email-warn">No email found — enrich website first</span>';
-    }
+    const toStatus = verified
+      ? `<span class="email-ok">${ic('check', 12)}Verified</span>`
+      : hasEmail
+        ? '<span class="email-warn">Not verified</span>'
+        : '<span class="email-warn">Not found — type one in, or enrich website first</span>';
 
     const verifyBtn = hasEmail
       ? `<button type="button" class="mini-btn" id="verifyEmailBtn-${cid}" onclick="App.verifyCompanyEmail('${cid}')">${verified ? ic('refresh', 12) + 'Re-verify email' : ic('search', 12) + 'Verify email'}</button>`
@@ -2246,19 +2225,21 @@ const App = (() => {
       : '';
 
     const hasSendingAccount = !!profile.emailAccount?.configured;
-    const canSend = verified && hasEmail && hasSendingAccount;
+    const canSend = hasEmail && hasSendingAccount;
     const sendHint = !hasSendingAccount
       ? 'Add your sending email account in Profile → Email account before you can send'
-      : !verified
-        ? 'Verify their email before sending'
+      : !hasEmail
+        ? 'Type an email address above before sending'
         : '';
 
     return `
       <div class="outreach-section" id="outreachSection-${cid}">
         <div class="outreach-top">
-          <div class="outreach-subject">To: <strong>${toLine}</strong></div>
+          <label class="outreach-field-label" style="margin:0">To ${toStatus}</label>
           ${verifyBtn}
         </div>
+        <input type="email" class="outreach-subject-input" id="outreachTo-${cid}" value="${escapeAttr(c.email || '')}"
+          placeholder="careers@company.com" oninput="App.onOutreachToInput('${cid}')" />
         <div class="outreach-verify-note" id="outreachVerifyNote-${cid}"></div>
 
         <div class="outreach-ai-bar">
@@ -2287,11 +2268,14 @@ const App = (() => {
             ${canSend ? '' : `disabled title="${escapeAttr(sendHint)}"`}>
             ${ic('email', 13)}Send email
           </button>
-          ${verified && c.email
-            ? `<a class="btn btn-outline" href="mailto:${escapeAttr(c.email)}?subject=${encodeURIComponent(subject)}"
-                 style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center"
-                 onclick="App.markAppliedFromLinkClick('${cid}')">${ic('external-link', 13)}Mail app &amp; mark applied</a>`
-            : ''}
+          <button type="button" class="btn btn-outline" id="mailAppBtn-${cid}" onclick="App.openMailApp('${cid}')" ${hasEmail ? '' : 'disabled'}>
+            ${ic('external-link', 13)}Mail app &amp; mark applied
+          </button>
+        </div>
+        <div class="outreach-actions">
+          <button type="button" class="btn btn-outline" id="resumeBtn-${cid}" onclick="App.downloadResume()">
+            ${ic('folder', 13)}Resume (PDF)
+          </button>
           <button type="button" class="btn btn-outline" id="coverLetterBtn-${cid}" onclick="App.downloadCoverLetter('${cid}')">
             ${ic('folder', 13)}Cover letter (PDF)
           </button>
@@ -2299,7 +2283,7 @@ const App = (() => {
         ${sendHint && !canSend ? `<div class="outreach-send-hint">${escapeHtml(sendHint)}</div>` : ''}
         ${!hasEmail && c.careers_url ? `
         <div class="outreach-careers-fallback">
-          No verified email — apply straight through their careers page instead:
+          No email on file — apply straight through their careers page instead:
           <a class="btn btn-primary" href="${escapeAttr(c.careers_url)}" target="_blank" rel="noopener"
              onclick="App.markAppliedFromLinkClick('${cid}')">${ic('external-link', 13)}Open careers page &amp; mark applied</a>
         </div>` : ''}
@@ -2321,9 +2305,38 @@ const App = (() => {
 
   function getOutreachFields(id) {
     return {
+      to: document.getElementById('outreachTo-' + id)?.value?.trim() || '',
       subject: document.getElementById('outreachSubject-' + id)?.value?.trim() || '',
       body: document.getElementById('outreachBody-' + id)?.value?.trim() || '',
     };
+  }
+
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  // Live-enables Send as soon as the To field holds a plausible address —
+  // it no longer needs the auto-detected email specifically or a passed
+  // verification check, since typing one in here is an explicit user
+  // override (server-side trusts it the same way a manually-clicked mailto
+  // link already implicitly does).
+  function onOutreachToInput(id) {
+    const btn = document.getElementById('sendEmailBtn-' + id);
+    const mailBtn = document.getElementById('mailAppBtn-' + id);
+    const to = document.getElementById('outreachTo-' + id)?.value?.trim() || '';
+    const looksValid = EMAIL_RE.test(to);
+    if (mailBtn) mailBtn.disabled = !looksValid;
+    if (btn) {
+      const hasSendingAccount = !!profile.emailAccount?.configured;
+      btn.disabled = !(looksValid && hasSendingAccount);
+      btn.title = !hasSendingAccount ? 'Add your sending email account in Profile → Email account before you can send'
+        : !looksValid ? 'Type an email address above before sending' : '';
+    }
+  }
+
+  function openMailApp(id) {
+    const { to, subject } = getOutreachFields(id);
+    if (!EMAIL_RE.test(to)) { toast('Type a valid email address first', 'error'); return; }
+    window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}`;
+    markAppliedFromLinkClick(id);
   }
 
   function mergeCompanyUpdate(updated) {
@@ -2413,8 +2426,9 @@ const App = (() => {
     const c = state.companies.find(x => String(x.id) === String(id))
       || state.pipelineCompanies.find(x => String(x.id) === String(id));
     if (!c) return;
-    if (!isVerifiedEmail(c)) {
-      toast('Verify their email first', 'error');
+    const { to, subject, body } = getOutreachFields(id);
+    if (!EMAIL_RE.test(to)) {
+      toast('Type a valid email address to send to', 'error');
       return;
     }
     if (!profile.emailAccount?.configured) {
@@ -2422,7 +2436,6 @@ const App = (() => {
       openProfile();
       return;
     }
-    const { subject, body } = getOutreachFields(id);
     if (!subject || !body) {
       toast('Subject and message required', 'error');
       return;
@@ -2430,7 +2443,7 @@ const App = (() => {
     const attachResume = document.getElementById('attachResume-' + id)?.checked ?? true;
     const attachCoverLetter = document.getElementById('attachCoverLetter-' + id)?.checked ?? true;
     const attachNote = [attachResume && 'resume', attachCoverLetter && 'cover letter'].filter(Boolean).join(' + ');
-    if (!window.confirm(`Send email to ${c.email}?\n\nSubject: ${subject}${attachNote ? `\nAttaching: ${attachNote}` : ''}`)) return;
+    if (!window.confirm(`Send email to ${to}?\n\nSubject: ${subject}${attachNote ? `\nAttaching: ${attachNote}` : ''}`)) return;
 
     const btn = document.getElementById('sendEmailBtn-' + id);
     if (btn) { btn.disabled = true; btn.innerHTML = '<span class="inline-spinner"></span>Sending…'; }
@@ -2439,6 +2452,7 @@ const App = (() => {
         method: 'POST',
         headers: AuthGate.authHeaders(),
         body: JSON.stringify({
+          to,
           subject,
           body,
           fromName: profile.name || profile.signature,
@@ -2454,7 +2468,8 @@ const App = (() => {
       toast(err.message, 'error');
     } finally {
       if (btn) {
-        btn.disabled = !(isVerifiedEmail(c) && profile.emailAccount?.configured);
+        const stillValid = EMAIL_RE.test(document.getElementById('outreachTo-' + id)?.value?.trim() || '');
+        btn.disabled = !(stillValid && profile.emailAccount?.configured);
         btn.innerHTML = `${ic('email', 13)}Send email`;
       }
     }
@@ -2469,30 +2484,21 @@ const App = (() => {
     );
   }
 
+  // Address, LinkedIn/employees, and a mailto link all already live in
+  // Contact / Company links / People — this only holds what's genuinely
+  // NOT shown anywhere else: map actions, a general careers search, and
+  // stats not covered elsewhere.
   function renderExplore(c) {
-    const links = [];
     const nameQ = encodeURIComponent(c.name);
     const addrQ = encodeURIComponent([c.name, c.address].filter(Boolean).join(' '));
-    links.push({ icon: 'map-nav', label: 'Google Maps', url: `https://www.google.com/maps/search/?api=1&query=${addrQ}` });
-    links.push({ icon: 'automotive', label: 'Directions',  url: `https://www.google.com/maps/dir/?api=1&destination=${addrQ}` });
-    const coLi = (c.socials || {}).linkedin;
-    if (coLi) {
-      links.push({ icon: 'briefcase', label: 'LinkedIn co.', url: coLi });
-      const coPeople = linkedinCompanyPeopleUrl(c);
-      if (coPeople) links.push({ icon: 'hr', label: 'Employees', url: coPeople });
-    } else {
-      links.push({ icon: 'briefcase', label: 'LinkedIn', url: `https://www.linkedin.com/search/results/companies/?keywords=${nameQ}` });
-      links.push({ icon: 'hr', label: 'People', url: linkedinPeopleSearchUrl(c) });
-    }
-    links.push({ icon: 'search', label: 'Google', url: `https://www.google.com/search?q=${nameQ}+careers` });
-    if (c.email && isVerifiedEmail(c)) {
-      const subj = encodeURIComponent(`Application — ${c.name}`);
-      links.push({ icon: 'email', label: 'Email careers', url: `mailto:${c.email}?subject=${subj}` });
-    }
+    const links = [
+      { icon: 'map-nav', label: 'Google Maps', url: `https://www.google.com/maps/search/?api=1&query=${addrQ}` },
+      { icon: 'automotive', label: 'Directions', url: `https://www.google.com/maps/dir/?api=1&destination=${addrQ}` },
+      { icon: 'search', label: 'Search on Google', url: `https://www.google.com/search?q=${nameQ}+careers` },
+    ];
 
     const stats = [];
-    if (typeof c.rating === 'number')       stats.push(`<span>${ic('star')}${c.rating.toFixed(1)} (Google)</span>`);
-    if (c.address)                          stats.push(`<span>${ic('pin')}${escapeHtml(c.address)}</span>`);
+    if (typeof c.rating === 'number') stats.push(`<span>${ic('star')}${c.rating.toFixed(1)} (Google)</span>`);
     if (c.enriched_at) {
       stats.push(`<span title="${new Date(c.enriched_at).toLocaleString()}">${ic('clock')}Enriched ${timeAgo(c.enriched_at)}</span>`);
     } else if (c.website) {
@@ -2500,7 +2506,7 @@ const App = (() => {
     }
     const totalJobs   = (c.jobs || []).length;
     const appliedJobs = (c.jobs || []).filter(j => j.applied).length;
-    if (totalJobs)                          stats.push(`<span>${ic('admin')}${appliedJobs}/${totalJobs} jobs applied</span>`);
+    if (totalJobs) stats.push(`<span>${ic('admin')}${appliedJobs}/${totalJobs} jobs applied</span>`);
 
     return `
       <div class="explore-stats">${stats.join('')}</div>
@@ -2594,7 +2600,6 @@ const App = (() => {
     })() : '';
 
     const companyLinksSection = renderCompanyLinksSection(c);
-    const linkedinSection = renderLinkedInSection(c);
 
     // Description (from meta description / og:description / page text)
     const descSection = c.description ? `
@@ -2624,7 +2629,6 @@ const App = (() => {
         ${addressBit}
       </div>
       ${companyLinksSection}
-      ${linkedinSection}
       ${teamSection}
       ${jobsSection}
       ${socialRow}
@@ -2638,17 +2642,11 @@ const App = (() => {
         ${renderExplore(c)}
       </div>
       <div class="detail-section">
-        <div class="detail-label">Application status</div>
+        <div class="detail-label">Your tracking</div>
         <button class="apply-big ${c.status === 'applied' ? 'applied' : ''}" onclick="App.toggleStatus('${c.id}', 'applied')">
           ${c.status === 'applied' ? ic('check', 14) + 'Applied — click to undo' : 'Mark whole company as applied (manual)'}
         </button>
-      </div>
-      <div class="detail-section">
-        <div class="detail-label">Your rating</div>
         <div class="rating-row">${stars}</div>
-      </div>
-      <div class="detail-section">
-        <div class="detail-label">Notes</div>
         <textarea class="notes-area" placeholder="Add notes about this company…" oninput="App.saveNotes('${c.id}', this.value)">${escapeHtml(c.notes || '')}</textarea>
       </div>
     `;
@@ -3274,6 +3272,7 @@ const App = (() => {
     toggleStatus, toggleJobApplied, setRating, saveNotes, refreshJobs,
     copy, copyOutreach,
     verifyCompanyEmail, generateOutreachEmails, applyOutreachVariant, sendOutreachEmail,
+    onOutreachToInput, openMailApp,
     openProfile, closeProfile, closeProfileBackdrop, saveProfile, logout, deleteAccount, resendVerification,
     downloadResume, downloadCoverLetter,
     resolveTeamLinkedIn, discoverPeople, reVerifyCompany, toggleMapMode,

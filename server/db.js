@@ -563,6 +563,13 @@ function hydrateCompany(row) {
     emailFields.email_verified = true;
     emailFields.email = row.email;
     if (row.email_source) emailFields.email_source = row.email_source;
+  } else if (row.email_source === 'user_edited' && row.email) {
+    // A human deliberately typed this in — the scraped-noise blocklist
+    // (example.com, admin@, etc.) exists to filter auto-detected garbage,
+    // not to second-guess an explicit manual entry.
+    emailFields.email = row.email;
+    emailFields.email_source = row.email_source;
+    emailFields.email_verified = false;
   }
   const allEmails = safeJSON(row.all_emails, []).filter(e => e && !isBlockedEmail(e));
   return {
