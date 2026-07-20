@@ -1,3 +1,9 @@
+# NOTE (2026-07-20): stale in a couple of places since the Postgres/Supabase
+# migration — the live service actually runs on the free plan with no disk
+# (DATABASE_URL, not a local SQLite file + DATA_DIR, is what persists data
+# now), managed directly in Render's dashboard/API rather than by re-applying
+# this blueprint. Kept around for the buildCommand/env var documentation
+# value; don't assume plan/disk below matches reality without checking.
 services:
   - type: web
     name: areahunt
@@ -7,7 +13,16 @@ services:
     # filesystem wipes the SQLite DB (every user account, saved company,
     # and encrypted email password) on every restart/redeploy.
     plan: starter
-    buildCommand: npm install
+    # `npx puppeteer browsers install chrome` is required in addition to
+    # `npm install` — when Render's build cache reuses node_modules
+    # unchanged ("up to date, audited N packages"), npm skips re-running
+    # postinstall scripts, so Puppeteer's own Chrome download never re-fires.
+    # Its default download location ($HOME/.cache/puppeteer) also isn't part
+    # of what Render persists into the running instance either way — see
+    # PUPPETEER_CACHE_DIR below, which points it inside the project
+    # directory instead. Without both of these, PDF generation
+    # (resume/cover letter) fails at runtime with "Could not find Chrome."
+    buildCommand: npm install && npx puppeteer browsers install chrome
     startCommand: npm start
     healthCheckPath: /api/health
     disk:
@@ -49,3 +64,9 @@ services:
         value: 4500
       - key: ENRICH_USER_AGENT
         value: "AreaHuntBot/1.0 (+live job-area scanner)"
+      - key: PUPPETEER_CACHE_DIR
+        value: /opt/render/project/src/.cache/puppeteer
+      - key: DATABASE_URL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
