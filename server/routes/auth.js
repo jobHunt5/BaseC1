@@ -55,6 +55,34 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000).unref();
 
+// The login-attempt limiter above is keyed by (ip, email) — a script cycling
+// through a fresh fake email on every request gets a brand new bucket each
+// time, so it doesn't actually cap account-creation floods. This one is
+// keyed by IP alone and only counts toward NEW accounts (see the `!user`
+// branch in the handler below), separately from the existing per-account
+// login-attempt limit so real returning users are never affected by it.
+const signupAttempts = new Map();
+const SIGNUP_RATE_WINDOW_MS = 60 * 60 * 1000;
+const SIGNUP_RATE_MAX = 8;
+
+function checkSignupRateLimit(ip) {
+  const now = Date.now();
+  const entry = signupAttempts.get(ip);
+  if (!entry || now - entry.windowStart > SIGNUP_RATE_WINDOW_MS) {
+    signupAttempts.set(ip, { windowStart: now, count: 1 });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= SIGNUP_RATE_MAX;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of signupAttempts) {
+    if (now - entry.windowStart > SIGNUP_RATE_WINDOW_MS) signupAttempts.delete(key);
+  }
+}, 60 * 60 * 1000).unref();
+
 // The encrypted app password never leaves the server — every response that
 // includes a profile gets this instead of the raw emailAccount object, so
 // the client can render "configured / not configured" without ever seeing
@@ -127,7 +155,14 @@ async function getUserFromRequest(req) {
 }
 
 router.post('/login', async (req, res) => {
-  const { email, password, name } = req.body || {};
+  const { email, password, name, website } = req.body || {};
+  // Honeypot — a hidden field real browsers never fill in. Any value here
+  // means a bot, not a person. Returns the same generic error a bot would
+  // get from a normal validation failure, so it doesn't learn it tripped
+  // detection specifically.
+  if (website) {
+    return res.status(400).json({ error: 'Invalid request' });
+  }
   if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'Valid email required' });
   }
@@ -143,6 +178,9 @@ router.post('/login', async (req, res) => {
   let user = await getUserByEmail(normalized);
 
   if (!user) {
+    if (!checkSignupRateLimit(req.ip)) {
+      return res.status(429).json({ error: 'Too many accounts created recently — try again later' });
+    }
     const id = `user:${crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16)}`;
     user = await upsertUser({
       id,

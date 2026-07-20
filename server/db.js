@@ -233,6 +233,21 @@ const ready = (async () => {
       value       TEXT NOT NULL,
       updated_at  BIGINT NOT NULL
     );
+
+    -- There's one shared admin password rather than per-admin accounts, so
+    -- this can't attribute an action to a specific admin — but it still
+    -- gives a record of what happened and when, plus the requesting IP as
+    -- the best available signal, instead of admin mutations leaving no
+    -- trace at all.
+    CREATE TABLE IF NOT EXISTS admin_actions (
+      id          SERIAL PRIMARY KEY,
+      action      TEXT NOT NULL,
+      target      TEXT,
+      detail      TEXT,
+      actor_ip    TEXT,
+      created_at  BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_admin_actions_created ON admin_actions(created_at);
   `);
 
   const { rows } = await pool.query('SELECT key, value FROM settings');
@@ -1033,6 +1048,17 @@ async function setUserSuspended(id, suspended) {
   });
 }
 
+async function recordAdminAction(action, target, detail, actorIp) {
+  await run(
+    `INSERT INTO admin_actions (action, target, detail, actor_ip, created_at) VALUES (@action, @target, @detail, @actor_ip, @now)`,
+    { action, target: target || null, detail: detail || null, actor_ip: actorIp || null, now: nowMs() },
+  );
+}
+
+async function getAdminActions(limit = 100) {
+  return all(`SELECT * FROM admin_actions ORDER BY created_at DESC LIMIT @limit`, { limit });
+}
+
 async function deleteUser(id) {
   const client = await pool.connect();
   try {
@@ -1083,6 +1109,8 @@ module.exports = {
   getAllUsersWithStats,
   setUserSuspended,
   deleteUser,
+  recordAdminAction,
+  getAdminActions,
   recordInteraction,
   getAllInteractionsWithCompany,
   getInteractionsForCompany,

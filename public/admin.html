@@ -37,6 +37,7 @@
       <button type="button" class="admin-tab active" data-tab="overview" onclick="AdminApp.switchTab('overview')">Overview</button>
       <button type="button" class="admin-tab" data-tab="users" onclick="AdminApp.switchTab('users')">Users</button>
       <button type="button" class="admin-tab" data-tab="settings" onclick="AdminApp.switchTab('settings')">Settings</button>
+      <button type="button" class="admin-tab" data-tab="audit" onclick="AdminApp.switchTab('audit')">Audit Log</button>
     </nav>
     <button type="button" class="admin-btn admin-btn-outline" onclick="AdminApp.logout()">Sign out</button>
   </header>
@@ -45,6 +46,7 @@
     <section class="admin-tab-panel" id="panel-overview"></section>
     <section class="admin-tab-panel hidden" id="panel-users"></section>
     <section class="admin-tab-panel hidden" id="panel-settings"></section>
+    <section class="admin-tab-panel hidden" id="panel-audit"></section>
   </main>
 </div>
 

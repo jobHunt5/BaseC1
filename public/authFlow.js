@@ -205,11 +205,11 @@ const AuthGate = (() => {
       : { 'Content-Type': 'application/json' };
   }
 
-  async function apiLogin(email, password) {
+  async function apiLogin(email, password, hp) {
     const resp = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, website: hp }),
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(data.error || 'Login failed');
@@ -350,6 +350,9 @@ const AuthGate = (() => {
       <input class="form-input" id="loginEmail" type="email" placeholder="you@example.com" autocomplete="username" />
       <label class="form-label">Password</label>
       <input class="form-input" id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password" />
+      <!-- Honeypot — invisible to real users, real browsers never fill it in,
+           autofill bots and scripted form-fillers often do. -->
+      <input type="text" id="loginHp" name="website" tabindex="-1" autocomplete="off" class="hp-field" aria-hidden="true" />
       <button class="btn btn-primary auth-submit" id="loginBtn">Sign in</button>
       <p class="auth-foot">By continuing you agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms</a> and <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>. We'll ask for your name and details next.</p>`;
 
@@ -362,12 +365,13 @@ const AuthGate = (() => {
   async function submitLogin() {
     const email = document.getElementById('loginEmail').value.trim();
     const password = document.getElementById('loginPassword').value;
+    const hp = document.getElementById('loginHp')?.value || '';
     const btn = document.getElementById('loginBtn');
     clearObError();
     btn.disabled = true;
     btn.textContent = 'Signing in…';
     try {
-      const data = await apiLogin(email, password);
+      const data = await apiLogin(email, password, hp);
       session = {
         token: data.token,
         email: data.user.email,

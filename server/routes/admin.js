@@ -15,6 +15,7 @@ const express = require('express');
 const {
   getScanStats, getStatusCounts, getJobQualityStats, getAiFitUsageStats,
   getAllUsersWithStats, getUserById, setUserSuspended, deleteUser, getAnalytics,
+  recordAdminAction, getAdminActions,
 } = require('../db');
 const { getLearningStats } = require('../services/matchLearningService');
 const { getSettingsWithMeta, updateSetting } = require('../services/settingsService');
@@ -62,15 +63,20 @@ router.get('/settings', (req, res) => {
   res.json({ settings: getSettingsWithMeta() });
 });
 
-router.put('/settings', (req, res) => {
+router.put('/settings', async (req, res) => {
   const { key, value } = req.body || {};
   if (!key) return res.status(400).json({ error: 'key required' });
   try {
     const settings = updateSetting(key, value);
+    await recordAdminAction('setting_updated', key, `-> ${value}`, req.ip);
     res.json({ settings });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+router.get('/audit-log', async (req, res) => {
+  res.json({ actions: await getAdminActions(200) });
 });
 
 router.get('/users', async (req, res) => {
@@ -89,6 +95,7 @@ router.patch('/users/:id', async (req, res) => {
   const { suspended } = req.body || {};
   if (suspended === undefined) return res.status(400).json({ error: 'suspended required' });
   await setUserSuspended(user.id, !!suspended);
+  await recordAdminAction(suspended ? 'user_suspended' : 'user_unsuspended', user.email, null, req.ip);
   res.json({ user: await getUserById(user.id) });
 });
 
@@ -96,6 +103,7 @@ router.delete('/users/:id', async (req, res) => {
   const user = await getUserById(req.params.id);
   if (!user) return res.status(404).json({ error: 'not found' });
   await deleteUser(user.id);
+  await recordAdminAction('user_deleted', user.email, null, req.ip);
   res.json({ ok: true });
 });
 

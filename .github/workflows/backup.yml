@@ -1,0 +1,38 @@
+name: Database Backup
+
+on:
+  schedule:
+    # 03:00 UTC daily — well outside any Serper/Google daily-budget reset
+    # window, and low enough frequency (~30 runs/month) that it's nowhere
+    # near GitHub Actions' free private-repo minute allowance.
+    - cron: '0 3 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install postgresql-client 17 (matches the Supabase server version)
+        run: |
+          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          sudo sh -c 'echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Dump database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          mkdir -p backup
+          # --schema=public only — Supabase's own internal schemas (auth,
+          # storage, vault, graphql) aren't app data and would otherwise
+          # bloat every backup and complicate a restore.
+          pg_dump "$DATABASE_URL" --no-owner --no-acl --schema=public -F c -f "backup/areahunt-$(date -u +%Y-%m-%dT%H-%M-%SZ).dump"
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: backup/*.dump
+          retention-days: 30

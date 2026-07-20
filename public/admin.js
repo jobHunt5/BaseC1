@@ -99,6 +99,7 @@
     if (tab === 'overview') loadOverview();
     if (tab === 'users') loadUsers();
     if (tab === 'settings') loadSettings();
+    if (tab === 'audit') loadAuditLog();
   }
 
   // ---- overview -------------------------------------------------------
@@ -505,6 +506,46 @@
       alert(err.message || 'Could not update setting');
       loadSettings();
     }
+  }
+
+  const AUDIT_ACTION_LABELS = {
+    setting_updated: 'Setting changed',
+    user_suspended: 'User suspended',
+    user_unsuspended: 'User unsuspended',
+    user_deleted: 'User deleted',
+  };
+
+  async function loadAuditLog() {
+    const panel = document.getElementById('panel-audit');
+    panel.innerHTML = `<div class="admin-loading">Loading…</div>`;
+    let actions;
+    try {
+      const data = await fetch('/api/admin/audit-log', { headers: authHeaders() }).then(r => r.json());
+      actions = data.actions || [];
+    } catch {
+      panel.innerHTML = `<div class="admin-loading">Could not reach the server.</div>`;
+      return;
+    }
+    if (!actions.length) {
+      panel.innerHTML = `<div class="admin-card admin-card-wide"><div class="admin-card-title">Audit log</div><p class="admin-settings-hint">No admin actions recorded yet.</p></div>`;
+      return;
+    }
+    panel.innerHTML = `
+      <div class="admin-card admin-card-wide">
+        <div class="admin-card-title">Audit log</div>
+        <p class="admin-settings-hint">Every admin action (settings changes, suspend/delete) — there's one shared admin password, not per-admin accounts, so this shows what happened and the requesting IP, not which specific person.</p>
+        <table class="admin-table">
+          <thead><tr><th>When</th><th>Action</th><th>Target</th><th>Detail</th><th>From IP</th></tr></thead>
+          <tbody>${actions.map(a => `
+            <tr>
+              <td>${escapeHtml(fmtDateTime(a.created_at))}</td>
+              <td>${escapeHtml(AUDIT_ACTION_LABELS[a.action] || a.action)}</td>
+              <td>${escapeHtml(a.target || '—')}</td>
+              <td>${escapeHtml(a.detail || '—')}</td>
+              <td>${escapeHtml(a.actor_ip || '—')}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>`;
   }
 
   window.AdminApp = {

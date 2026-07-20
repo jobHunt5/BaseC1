@@ -1365,6 +1365,7 @@ body.auth-locked .topbar { filter: blur(2px); pointer-events: none; user-select:
 .auth-submit:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(108, 99, 255, 0.45); }
 .auth-foot { font-size: 11.5px; color: var(--muted); text-align: center; margin-top: 16px; line-height: 1.5; }
 .auth-foot a { color: var(--accent); }
+.hp-field { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
 
 /* Per-step header: small icon badge + "STEP X OF 5" eyebrow, so every step
    carries its own visual identity instead of being an undifferentiated form. */
