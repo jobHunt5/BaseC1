@@ -25,10 +25,17 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           mkdir -p backup
+          # The runner's default `pg_dump` on PATH is an older pre-installed
+          # version (16.x) even after installing postgresql-client-17 above —
+          # apt adds it alongside, it doesn't become the default on PATH. Call
+          # the versioned binary directly instead of relying on `pg_dump`
+          # resolving to it — pg_dump refuses to run against a newer server
+          # than itself, and Supabase runs Postgres 17.
+          #
           # --schema=public only — Supabase's own internal schemas (auth,
           # storage, vault, graphql) aren't app data and would otherwise
           # bloat every backup and complicate a restore.
-          pg_dump "$DATABASE_URL" --no-owner --no-acl --schema=public -F c -f "backup/areahunt-$(date -u +%Y-%m-%dT%H-%M-%SZ).dump"
+          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" --no-owner --no-acl --schema=public -F c -f "backup/areahunt-$(date -u +%Y-%m-%dT%H-%M-%SZ).dump"
 
       - name: Upload backup artifact
         uses: actions/upload-artifact@v4
