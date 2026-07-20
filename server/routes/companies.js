@@ -406,13 +406,17 @@ router.post('/companies/:id/send-email', sendRateLimit, async (req, res) => {
   }
 
   try {
+    // Both PDFs share one headless-Chrome instance (see resumeService.js's
+    // browser singleton) but each still needs its own page render — doing
+    // these one after another roughly doubles wait time on Render's shared
+    // CPU for no reason, since neither depends on the other.
+    const [resumeBuf, coverLetterBuf] = await Promise.all([
+      attachResume ? renderResumePdf({ ...req.user.profile, email: req.user.email }) : null,
+      attachCoverLetter ? renderCoverLetterPdf({ ...req.user.profile, email: req.user.email }, c) : null,
+    ]);
     const attachments = [];
-    if (attachResume) {
-      attachments.push({ filename: 'resume.pdf', content: await renderResumePdf({ ...req.user.profile, email: req.user.email }) });
-    }
-    if (attachCoverLetter) {
-      attachments.push({ filename: `cover-letter-${c.name.replace(/[^a-z0-9]+/gi, '-')}.pdf`, content: await renderCoverLetterPdf({ ...req.user.profile, email: req.user.email }, c) });
-    }
+    if (resumeBuf) attachments.push({ filename: 'resume.pdf', content: resumeBuf });
+    if (coverLetterBuf) attachments.push({ filename: `cover-letter-${c.name.replace(/[^a-z0-9]+/gi, '-')}.pdf`, content: coverLetterBuf });
 
     const result = await sendOutreachEmail({
       to: sendTo,
