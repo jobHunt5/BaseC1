@@ -15,6 +15,7 @@ if (process.env.SENTRY_DSN) {
 const path = require('path');
 const express = require('express');
 const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 
 const authRoute = require('./routes/auth');
 const scanRoute = require('./routes/scan');
@@ -86,6 +87,7 @@ app.use(helmet({
   hsts: process.env.NODE_ENV === 'production',
 }));
 app.use(express.json({ limit: '1mb' }));
+app.use(cookieParser());
 
 // Serve the front end from /public.
 app.use(express.static(path.join(__dirname, '..', 'public')));

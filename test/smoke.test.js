@@ -26,6 +26,14 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
+// Node's fetch has no automatic cookie jar across separate calls (unlike a
+// browser) — the session now lives in an httpOnly cookie, so tests have to
+// carry it forward manually between requests.
+function cookieFrom(res) {
+  const raw = res.headers.get('set-cookie');
+  return raw ? raw.split(';')[0] : null;
+}
+
 test('GET /api/health responds ok', async () => {
   const res = await fetch(`${baseUrl}/api/health`);
   assert.equal(res.status, 200);
@@ -53,8 +61,9 @@ test('signup, login, me, and account deletion', async () => {
     body: JSON.stringify({ email, password, name: 'Smoke Test' }),
   });
   assert.equal(signupRes.status, 200);
-  const { token, user } = await signupRes.json();
-  assert.ok(token);
+  const cookie = cookieFrom(signupRes);
+  assert.ok(cookie);
+  const { user } = await signupRes.json();
   assert.equal(user.email, email);
 
   // Wrong password on an existing account must be rejected.
@@ -74,7 +83,7 @@ test('signup, login, me, and account deletion', async () => {
   assert.equal(reloginRes.status, 200);
 
   const meRes = await fetch(`${baseUrl}/api/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Cookie: cookie },
   });
   assert.equal(meRes.status, 200);
   const me = await meRes.json();
@@ -83,20 +92,20 @@ test('signup, login, me, and account deletion', async () => {
   // Deleting with the wrong password must fail and leave the account intact.
   const badDeleteRes = await fetch(`${baseUrl}/api/auth/me`, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
     body: JSON.stringify({ password: 'not-the-password' }),
   });
   assert.equal(badDeleteRes.status, 401);
 
   const deleteRes = await fetch(`${baseUrl}/api/auth/me`, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
     body: JSON.stringify({ password }),
   });
   assert.equal(deleteRes.status, 200);
 
   const meAfterDeleteRes = await fetch(`${baseUrl}/api/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Cookie: cookie },
   });
   assert.equal(meAfterDeleteRes.status, 401);
 });

@@ -12,6 +12,12 @@
 // Tokens are HMAC-signed and expire (see TOKEN_TTL_MS) — a token has to
 // actually prove which account it belongs to and can't be replayed forever
 // if it leaks.
+//
+// The token itself lives in an httpOnly cookie, never in a JS-readable
+// response body or localStorage — a page-level XSS can run arbitrary script
+// but still can't read this cookie to steal the session and replay it
+// elsewhere. SameSite=Lax covers CSRF for this single-origin app (the
+// cookie is never sent on a cross-site POST).
 
 const express = require('express');
 const crypto = require('crypto');
@@ -22,6 +28,21 @@ const { hashPassword, verifyPassword } = require('../services/passwordService');
 const router = express.Router();
 
 const TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
+const SESSION_COOKIE = 'areahunt_session';
+
+function setSessionCookie(res, token) {
+  res.cookie(SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: TOKEN_TTL_MS,
+    path: '/',
+  });
+}
+
+function clearSessionCookie(res) {
+  res.clearCookie(SESSION_COOKIE, { path: '/' });
+}
 
 // Minimal in-process login rate limiter — 10 attempts per email+IP per 15
 // minutes. Not a substitute for a real distributed limiter if this ever
@@ -146,8 +167,7 @@ function parseToken(token) {
 }
 
 async function getUserFromRequest(req) {
-  const auth = req.headers.authorization || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : req.query.token;
+  const token = req.cookies?.[SESSION_COOKIE];
   if (!token) return null;
   const userId = parseToken(token);
   if (!userId) return null;
@@ -211,8 +231,8 @@ router.post('/login', async (req, res) => {
   }
 
   const token = makeToken(user.id);
+  setSessionCookie(res, token);
   res.json({
-    token,
     user: {
       id: user.id,
       email: user.email,
@@ -220,6 +240,11 @@ router.post('/login', async (req, res) => {
       onboardingComplete: user.onboardingComplete,
     },
   });
+});
+
+router.post('/logout', (req, res) => {
+  clearSessionCookie(res);
+  res.json({ ok: true });
 });
 
 router.get('/me', async (req, res) => {
@@ -279,9 +304,8 @@ router.put('/profile', async (req, res) => {
   });
 });
 
-// Requires the current password as re-confirmation — a bearer token alone
-// (e.g. left signed in on a shared device) shouldn't be enough to
-// permanently destroy an account.
+// Requires the current password as re-confirmation — a stolen/left-open
+// session shouldn't be enough on its own to permanently destroy an account.
 router.delete('/me', async (req, res) => {
   const user = await getUserFromRequest(req);
   if (!user) return res.status(401).json({ error: 'Not signed in' });
@@ -292,6 +316,7 @@ router.delete('/me', async (req, res) => {
   }
 
   await deleteUser(user.id);
+  clearSessionCookie(res);
   res.json({ deleted: true });
 });
 

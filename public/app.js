@@ -674,7 +674,7 @@ const App = (() => {
   async function openProfile() {
     let p = profile;
     const sess = AuthGate.getSession?.();
-    if (sess?.token) {
+    if (sess) {
       try {
         p = await AuthGate.refreshProfile() || AuthGate.getProfile();
         applyUserProfile(p);
@@ -700,7 +700,7 @@ const App = (() => {
   async function saveProfile() {
     const sess = AuthGate.getSession?.();
     let base = profile;
-    if (sess?.token) {
+    if (sess) {
       try {
         base = await AuthGate.refreshProfile() || AuthGate.getProfile() || profile;
       } catch {
@@ -715,7 +715,7 @@ const App = (() => {
     try { localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); } catch {}
     const isComplete = !AuthGate.profileNeedsOnboarding?.(profile);
     try {
-      if (sess?.token) {
+      if (sess) {
         const saved = await AuthGate.saveProfileToServer(profile, isComplete);
         if (saved) applyUserProfile(saved);
         closeProfile();
@@ -733,7 +733,7 @@ const App = (() => {
 
   async function downloadPdf(url, filename, btn, busyLabel) {
     const sess = AuthGate.getSession?.();
-    if (!sess?.token) {
+    if (!sess) {
       toast('Sign in first', 'error');
       return;
     }

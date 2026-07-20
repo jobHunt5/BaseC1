@@ -17,6 +17,21 @@ const router = express.Router();
 // suspend, or delete every real account, so it's worth re-authenticating
 // more often than a normal session.
 const ADMIN_TOKEN_TTL_MS = 1000 * 60 * 60 * 12; // 12 hours
+const ADMIN_SESSION_COOKIE = 'areahunt_admin_session';
+
+function setAdminSessionCookie(res, token) {
+  res.cookie(ADMIN_SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: ADMIN_TOKEN_TTL_MS,
+    path: '/',
+  });
+}
+
+function clearAdminSessionCookie(res) {
+  res.clearCookie(ADMIN_SESSION_COOKIE, { path: '/' });
+}
 
 const loginAttempts = new Map();
 const RATE_WINDOW_MS = 15 * 60 * 1000;
@@ -83,8 +98,7 @@ function isValidAdminToken(token) {
 }
 
 function getAdminFromRequest(req) {
-  const auth = req.headers.authorization || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : req.query.token;
+  const token = req.cookies?.[ADMIN_SESSION_COOKIE];
   return isValidAdminToken(token);
 }
 
@@ -100,7 +114,14 @@ router.post('/login', (req, res) => {
   if (!password || !safeEqual(password, expected)) {
     return res.status(401).json({ error: 'Wrong password' });
   }
-  res.json({ token: makeAdminToken() });
+  const token = makeAdminToken();
+  setAdminSessionCookie(res, token);
+  res.json({ ok: true });
+});
+
+router.post('/logout', (req, res) => {
+  clearAdminSessionCookie(res);
+  res.json({ ok: true });
 });
 
 module.exports = router;

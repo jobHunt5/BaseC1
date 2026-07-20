@@ -1,6 +1,4 @@
 (function () {
-  const TOKEN_KEY = 'areahunt.admin.token.v1';
-  let token = null;
   let activeTab = 'overview';
   let usersCache = [];
 
@@ -15,23 +13,10 @@
   function fmtDate(ms) { return ms ? new Date(ms).toLocaleDateString() : '—'; }
   function fmtDateTime(ms) { return ms ? new Date(ms).toLocaleString() : '—'; }
 
+  // The admin session lives in an httpOnly cookie (areahunt_admin_session),
+  // sent automatically on every same-origin request — nothing to attach here.
   function authHeaders() {
-    return token
-      ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-      : { 'Content-Type': 'application/json' };
-  }
-
-  function saveToken(t) {
-    token = t;
-    try { localStorage.setItem(TOKEN_KEY, t); } catch {}
-  }
-  function loadToken() {
-    try { token = localStorage.getItem(TOKEN_KEY); } catch { token = null; }
-    return token;
-  }
-  function clearToken() {
-    token = null;
-    try { localStorage.removeItem(TOKEN_KEY); } catch {}
+    return { 'Content-Type': 'application/json' };
   }
 
   function showLogin(message) {
@@ -65,7 +50,6 @@
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Login failed');
-      saveToken(data.token);
       document.getElementById('adminPassword').value = '';
       showShell();
     } catch (err) {
@@ -76,8 +60,8 @@
     }
   }
 
-  function logout() {
-    clearToken();
+  async function logout() {
+    try { await fetch('/api/admin-auth/logout', { method: 'POST', headers: authHeaders() }); } catch {}
     showLogin();
   }
 
@@ -85,9 +69,10 @@
     document.getElementById('adminPassword').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') login();
     });
-    if (!loadToken()) { showLogin(); return; }
+    // No local guard — the httpOnly cookie is the source of truth for
+    // whether we're signed in, so this always asks the server first.
     const resp = await fetch('/api/admin/stats', { headers: authHeaders() });
-    if (resp.status === 401) { clearToken(); showLogin(); return; }
+    if (resp.status === 401) { showLogin(); return; }
     showShell();
   }
 
@@ -139,7 +124,7 @@
         fetch('/api/admin/stats', { headers: authHeaders() }),
         fetch(`/api/admin/analytics?days=${overviewDays}`, { headers: authHeaders() }),
       ]);
-      if (statsResp.status === 401 || analyticsResp.status === 401) { clearToken(); showLogin(); return; }
+      if (statsResp.status === 401 || analyticsResp.status === 401) { showLogin(); return; }
       if (!statsResp.ok) throw new Error(`/api/admin/stats -> ${statsResp.status}`);
       if (!analyticsResp.ok) throw new Error(`/api/admin/analytics -> ${analyticsResp.status}`);
       [stats, analytics] = await Promise.all([statsResp.json(), analyticsResp.json()]);

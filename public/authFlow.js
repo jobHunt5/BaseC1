@@ -154,7 +154,7 @@ const AuthGate = (() => {
   }
 
   async function persistDraft(complete = false) {
-    if (!session?.token) {
+    if (!session) {
       syncLocalProfile(draft);
       return draft;
     }
@@ -175,7 +175,7 @@ const AuthGate = (() => {
   }
 
   async function saveProfileToServer(partialProfile, onboardingComplete) {
-    if (!session?.token) {
+    if (!session) {
       syncLocalProfile({ ...draft, ...partialProfile });
       return { ...draft, ...partialProfile };
     }
@@ -199,10 +199,12 @@ const AuthGate = (() => {
     return session.profile;
   }
 
+  // The session lives in an httpOnly cookie, sent automatically by the
+  // browser on every same-origin request — nothing to attach here anymore.
+  // Kept as a function (rather than inlining `{ 'Content-Type': ... }`
+  // everywhere) so every existing call site stays unchanged.
   function authHeaders() {
-    return session?.token
-      ? { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' }
-      : { 'Content-Type': 'application/json' };
+    return { 'Content-Type': 'application/json' };
   }
 
   async function apiLogin(email, password, hp) {
@@ -217,7 +219,7 @@ const AuthGate = (() => {
   }
 
   async function apiSaveProfile(profile, onboardingComplete) {
-    if (!session?.token) return null;
+    if (!session) return null;
     const resp = await fetch('/api/auth/profile', {
       method: 'PUT',
       headers: authHeaders(),
@@ -229,7 +231,7 @@ const AuthGate = (() => {
   }
 
   async function apiDeleteAccount(password) {
-    if (!session?.token) return;
+    if (!session) return;
     const resp = await fetch('/api/auth/me', {
       method: 'DELETE',
       headers: authHeaders(),
@@ -248,11 +250,12 @@ const AuthGate = (() => {
   }
 
   async function apiMe() {
-    if (!session?.token) return null;
+    // No local guard here — the session cookie (not anything cached in JS)
+    // is the actual source of truth for whether we're signed in, so this
+    // always asks the server rather than trusting a local flag first.
     const resp = await fetch('/api/auth/me', { headers: authHeaders() });
     if (resp.ok) return resp.json();
     if (resp.status === 401) {
-      // Stale token from old format — force fresh login
       clearSession();
     }
     return null;
@@ -373,7 +376,6 @@ const AuthGate = (() => {
     try {
       const data = await apiLogin(email, password, hp);
       session = {
-        token: data.token,
         email: data.user.email,
         id: data.user.id,
         profile: { ...defaultProfile(), ...data.user.profile, email: data.user.email },
@@ -764,31 +766,35 @@ const AuthGate = (() => {
     loadSession();
     showGate();
 
-    if (session?.token) {
-      const me = await apiMe();
-      if (me) {
-        session.profile = { ...defaultProfile(), ...me.profile, email: me.email };
-        session.onboardingComplete = me.onboardingComplete;
-        saveSession();
-        draft = { ...session.profile };
-        const needsSetup = profileNeedsOnboarding(session.profile);
-        if (session.onboardingComplete && !needsSetup) {
-          finishBoot();
-          return;
-        }
-        // Incomplete profile — show full 5-step wizard even if flag was set early.
-        if (needsSetup) session.onboardingComplete = false;
-        step = inferResumeStep(draft);
-        renderOnboardingStep();
+    // Always ask the server — the httpOnly cookie (not the locally cached
+    // session shell) is what actually determines whether we're signed in.
+    const me = await apiMe();
+    if (me) {
+      session = session || {};
+      session.email = me.email;
+      session.id = me.id;
+      session.profile = { ...defaultProfile(), ...me.profile, email: me.email };
+      session.onboardingComplete = me.onboardingComplete;
+      saveSession();
+      draft = { ...session.profile };
+      const needsSetup = profileNeedsOnboarding(session.profile);
+      if (session.onboardingComplete && !needsSetup) {
+        finishBoot();
         return;
       }
-      clearSession();
+      // Incomplete profile — show full 5-step wizard even if flag was set early.
+      if (needsSetup) session.onboardingComplete = false;
+      step = inferResumeStep(draft);
+      renderOnboardingStep();
+      return;
     }
+    clearSession();
     setUserChip();
     renderLogin();
   }
 
-  function logout() {
+  async function logout() {
+    try { await fetch('/api/auth/logout', { method: 'POST', headers: authHeaders() }); } catch {}
     clearSession();
     setUserChip();
     showLogin();
@@ -817,7 +823,7 @@ const AuthGate = (() => {
 
   function getSession() { return session; }
   function getProfile() { return session?.profile || defaultProfile(); }
-  function isLoggedIn() { return !!(session?.token && session?.onboardingComplete); }
+  function isLoggedIn() { return !!(session && session.onboardingComplete); }
 
   function esc(s) {
     if (s == null) return '';
