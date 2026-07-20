@@ -166,6 +166,9 @@ const ready = (async () => {
       onboarding_complete  INTEGER NOT NULL DEFAULT 0,
       suspended            INTEGER NOT NULL DEFAULT 0,
       password_hash        TEXT,
+      email_verified       INTEGER NOT NULL DEFAULT 0,
+      email_verify_token   TEXT,
+      email_verify_expires BIGINT,
       created_at           BIGINT NOT NULL,
       updated_at           BIGINT NOT NULL
     );
@@ -248,6 +251,15 @@ const ready = (async () => {
       created_at  BIGINT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_admin_actions_created ON admin_actions(created_at);
+  `);
+
+  // Columns added after the table's first CREATE — unlike CREATE TABLE IF
+  // NOT EXISTS above (a no-op once the table already exists), this runs
+  // against a real users table with real accounts in it.
+  await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verify_token TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verify_expires BIGINT;
   `);
 
   const { rows } = await pool.query('SELECT key, value FROM settings');
@@ -984,6 +996,7 @@ function hydrateUser(row) {
     passwordHash: row.password_hash || null,
     onboardingComplete: !!row.onboarding_complete,
     suspended: !!row.suspended,
+    emailVerified: !!row.email_verified,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1019,6 +1032,29 @@ async function setPasswordHash(userId, hash) {
   await run(`UPDATE users SET password_hash = @password_hash, updated_at = @now WHERE id = @id`, {
     password_hash: hash, now: nowMs(), id: userId,
   });
+}
+
+async function setEmailVerifyToken(userId, token, expiresAt) {
+  await run(
+    `UPDATE users SET email_verify_token = @token, email_verify_expires = @expires, updated_at = @now WHERE id = @id`,
+    { token, expires: expiresAt, now: nowMs(), id: userId },
+  );
+}
+
+// Verifies + consumes the token in one step (clears it either way so it
+// can't be replayed) — returns the now-verified user, or null if the token
+// doesn't match any account or has expired.
+async function verifyEmailByToken(token) {
+  const row = await get(
+    `SELECT * FROM users WHERE email_verify_token = @token AND email_verify_expires > @now`,
+    { token, now: nowMs() },
+  );
+  if (!row) return null;
+  await run(
+    `UPDATE users SET email_verified = 1, email_verify_token = NULL, email_verify_expires = NULL, updated_at = @now WHERE id = @id`,
+    { now: nowMs(), id: row.id },
+  );
+  return hydrateUser(row);
 }
 
 // --- admin: user management ---
@@ -1107,6 +1143,8 @@ module.exports = {
   getUserByEmail,
   getUserById,
   setPasswordHash,
+  setEmailVerifyToken,
+  verifyEmailByToken,
   getAllUsersWithStats,
   setUserSuspended,
   deleteUser,

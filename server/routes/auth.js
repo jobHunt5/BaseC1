@@ -21,13 +21,28 @@
 
 const express = require('express');
 const crypto = require('crypto');
-const { upsertUser, getUserByEmail, getUserById, getAllSettings, setSetting, setPasswordHash, deleteUser } = require('../db');
+const {
+  upsertUser, getUserByEmail, getUserById, getAllSettings, setSetting, setPasswordHash, deleteUser,
+  setEmailVerifyToken, verifyEmailByToken,
+} = require('../db');
 const { encrypt } = require('../services/cryptoService');
 const { hashPassword, verifyPassword } = require('../services/passwordService');
+const { sendVerificationEmail } = require('../services/systemMailService');
 
 const router = express.Router();
 
 const TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
+const EMAIL_VERIFY_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
+
+// Fire-and-forget — signup shouldn't fail or hang on an SMTP hiccup, and
+// there's nothing actionable in the response either way (the account exists
+// regardless; the user just re-requests the email if it didn't arrive).
+async function issueVerificationEmail(user) {
+  const token = crypto.randomBytes(32).toString('hex');
+  await setEmailVerifyToken(user.id, token, Date.now() + EMAIL_VERIFY_TTL_MS);
+  const base = process.env.PUBLIC_URL || '';
+  await sendVerificationEmail(user.email, `${base}/api/auth/verify-email?token=${token}`);
+}
 const SESSION_COOKIE = 'areahunt_session';
 
 function setSessionCookie(res, token) {
@@ -209,6 +224,7 @@ router.post('/login', async (req, res) => {
       onboardingComplete: false,
     });
     await setPasswordHash(user.id, hashPassword(password));
+    issueVerificationEmail(user).catch(err => console.warn('[auth] verification email failed:', err.message));
   } else if (!user.passwordHash) {
     // Pre-existing account from before real passwords existed — this
     // login claims it (see the file-header comment for why that's safe
@@ -238,6 +254,7 @@ router.post('/login', async (req, res) => {
       email: user.email,
       profile: sanitizeProfile(user.profile),
       onboardingComplete: user.onboardingComplete,
+      emailVerified: user.emailVerified,
     },
   });
 });
@@ -255,7 +272,29 @@ router.get('/me', async (req, res) => {
     email: user.email,
     profile: sanitizeProfile(user.profile),
     onboardingComplete: user.onboardingComplete,
+    emailVerified: user.emailVerified,
   });
+});
+
+// Clicked from the verification email itself — a plain browser navigation,
+// not a fetch call, so this redirects back into the app with a query flag
+// rather than returning JSON.
+router.get('/verify-email', async (req, res) => {
+  const user = await verifyEmailByToken(String(req.query.token || ''));
+  res.redirect(user ? '/?verified=1' : '/?verified=0');
+});
+
+// Rate-limited the same as login attempts — reuses the per-(ip,email)
+// bucket since it's the same "don't let this be hammered" concern.
+router.post('/resend-verification', async (req, res) => {
+  const user = await getUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  if (user.emailVerified) return res.json({ ok: true, alreadyVerified: true });
+  if (!checkRateLimit(rateLimitKey(req, user.email))) {
+    return res.status(429).json({ error: 'Too many attempts — try again in a few minutes' });
+  }
+  await issueVerificationEmail(user);
+  res.json({ ok: true });
 });
 
 router.put('/profile', async (req, res) => {

@@ -71,8 +71,10 @@ const App = (() => {
 
   function init() {
     syncHeaderHeight();
+    handleVerifyRedirect();
     AuthGate.boot((sess) => {
       applyUserProfile(sess.profile);
+      showVerifyBanner(sess);
       if (!appStarted) {
         appStarted = true;
         initApp();
@@ -81,6 +83,41 @@ const App = (() => {
         if (state.companies.length) addMarkers();
       }
     });
+  }
+
+  // Handles the redirect back from clicking the link in a verification
+  // email (see server/routes/auth.js's GET /verify-email) — shows a toast,
+  // then strips the query param so a page refresh doesn't re-trigger it.
+  function handleVerifyRedirect() {
+    const params = new URLSearchParams(location.search);
+    if (!params.has('verified')) return;
+    const ok = params.get('verified') === '1';
+    toast(ok ? 'Email verified!' : 'That verification link is invalid or has expired', ok ? 'success' : 'error');
+    params.delete('verified');
+    const qs = params.toString();
+    history.replaceState({}, '', location.pathname + (qs ? `?${qs}` : ''));
+  }
+
+  function showVerifyBanner(sess) {
+    const banner = document.getElementById('verifyEmailBanner');
+    if (!banner) return;
+    if (!sess || sess.emailVerified) {
+      banner.style.display = 'none';
+      return;
+    }
+    banner.style.display = '';
+    banner.innerHTML = `<strong>Verify your email</strong> — check your inbox for a link, or <a href="#" onclick="App.resendVerification();return false;">resend it</a>.`;
+  }
+
+  async function resendVerification() {
+    try {
+      const resp = await fetch('/api/auth/resend-verification', { method: 'POST', headers: AuthGate.authHeaders() });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || 'Could not resend');
+      toast(data.alreadyVerified ? 'Already verified' : 'Verification email sent', 'success');
+    } catch (err) {
+      toast(err.message || 'Could not resend verification email', 'error');
+    }
   }
 
   function applyUserProfile(userProfile) {
@@ -3237,7 +3274,7 @@ const App = (() => {
     toggleStatus, toggleJobApplied, setRating, saveNotes, refreshJobs,
     copy, copyOutreach,
     verifyCompanyEmail, generateOutreachEmails, applyOutreachVariant, sendOutreachEmail,
-    openProfile, closeProfile, closeProfileBackdrop, saveProfile, logout, deleteAccount,
+    openProfile, closeProfile, closeProfileBackdrop, saveProfile, logout, deleteAccount, resendVerification,
     downloadResume, downloadCoverLetter,
     resolveTeamLinkedIn, discoverPeople, reVerifyCompany, toggleMapMode,
     openAccountMenu, resetListControls, loadMoreCompanies,
