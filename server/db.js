@@ -1080,6 +1080,7 @@ async function deleteUser(id) {
 
 module.exports = {
   ready,
+  pool, // exposed for test cleanup only — app code should go through the named functions above
   upsertCompany,
   updateEnrichment,
   setCompanyStatus,
