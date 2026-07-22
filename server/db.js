@@ -260,6 +260,29 @@ const ready = (async () => {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verify_token TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verify_expires BIGINT;
+    ALTER TABLE companies ADD COLUMN IF NOT EXISTS scrape_status TEXT NOT NULL DEFAULT 'never';
+    ALTER TABLE companies ADD COLUMN IF NOT EXISTS ats_detected TEXT;
+    ALTER TABLE companies ADD COLUMN IF NOT EXISTS last_scrape_attempt_at BIGINT;
+    ALTER TABLE companies ADD COLUMN IF NOT EXISTS scrape_attempts INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX IF NOT EXISTS idx_companies_scrape_status ON companies(scrape_status);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS alerts_enabled INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS unsubscribe_token TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS last_alert_sent_at BIGINT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS training_data_consent INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE IF NOT EXISTS job_alerts (
+      user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      job_id     INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      matched_at BIGINT NOT NULL,
+      sent_at    BIGINT,
+      PRIMARY KEY (user_id, job_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_alerts_unsent ON job_alerts(user_id) WHERE sent_at IS NULL;
+    CREATE TABLE IF NOT EXISTS api_cache (
+      cache_key  TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      expires_at BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_api_cache_expires ON api_cache(expires_at);
   `);
 
   const { rows } = await pool.query('SELECT key, value FROM settings');
@@ -365,6 +388,38 @@ async function updateEnrichment(id, e = {}) {
     enriched_at:    e.fetched ? nowMs() : null,
     now:            nowMs(),
   });
+}
+
+// 'never' | 'ok' | 'partial' | 'failed' — distinct from enrich_error/enriched_at,
+// which only ever record the *last successful* fetch. This tracks every
+// attempt (success or not) so we can query "who still needs a (re)scan".
+async function updateScrapeStatus(id, { status, ats = null, attempted_at } = {}) {
+  await run(`
+    UPDATE companies
+    SET scrape_status          = @status,
+        ats_detected           = @ats,
+        last_scrape_attempt_at = @attempted_at,
+        scrape_attempts        = scrape_attempts + 1,
+        updated_at             = @attempted_at
+    WHERE id = @id
+  `, { id, status, ats, attempted_at: attempted_at || nowMs() });
+}
+
+// Companies that have never been scraped, permanently failed, or were only
+// partially scraped (fetched OK but zero jobs found) more than `staleMs` ago —
+// i.e. candidates to (re)enqueue for a deep scan.
+async function getCompaniesNeedingRescan(limit = 200, staleMs = 7 * 24 * 60 * 60 * 1000) {
+  const rows = await all(`
+    SELECT id FROM companies
+    WHERE website IS NOT NULL AND website != ''
+      AND (
+        scrape_status IN ('never', 'failed')
+        OR (scrape_status = 'partial' AND (last_scrape_attempt_at IS NULL OR last_scrape_attempt_at < @cutoff))
+      )
+    ORDER BY last_scrape_attempt_at ASC NULLS FIRST
+    LIMIT @limit
+  `, { cutoff: nowMs() - staleMs, limit });
+  return rows.map(r => r.id);
 }
 
 async function updateTeam(id, team) {
@@ -537,7 +592,7 @@ async function listCompaniesByPipeline(kind, userId) {
         ${UCS_JOIN}
         LEFT JOIN jobs j ON j.company_id = c.id
         LEFT JOIN user_job_applied uja ON uja.job_id = j.id AND uja.user_id = @user_id
-        WHERE ucs.status = 'applied' OR uja.user_id IS NOT NULL
+        WHERE ucs.status IN ('applied', 'interviewing', 'offer', 'rejected') OR uja.user_id IS NOT NULL
         ORDER BY c.updated_at DESC
       `, params)
     : await all(`
@@ -721,6 +776,23 @@ async function recordScan({ south, west, north, east, provider, resultCount }, u
   `, { south, west, north, east, provider, result_count: resultCount, user_id: userId || null, now: nowMs() });
 }
 
+// Most recent Google-provider scan whose bbox fully contains the requested
+// one, within the last `sinceMs`. A hit means "we already have fresh data
+// for this exact area" — deliberately simple containment (not partial-
+// overlap merging): if the new request extends beyond any single prior
+// scan's coverage, that's correctly a miss and a real provider call happens.
+async function getRecentCoveringScan({ south, west, north, east }, sinceMs) {
+  return get(`
+    SELECT * FROM scans
+    WHERE provider = 'google'
+      AND south <= @south AND north >= @north
+      AND west <= @west AND east >= @east
+      AND created_at > @since
+    ORDER BY created_at DESC
+    LIMIT 1
+  `, { south, west, north, east, since: sinceMs });
+}
+
 async function getScanStats() {
   const recent = await all(`
     SELECT s.*, u.email AS user_email FROM scans s
@@ -731,10 +803,109 @@ async function getScanStats() {
   return { recent, totals };
 }
 
+// --- job alerts ---
+
+// Users eligible for a job-alert email about something at (lat,lng): email
+// verified, not suspended, alerts on, and — the actual "right place" signal
+// — they've previously scanned an area whose bounding box contains this
+// point. Mirrors listCompaniesInBounds's bbox-containment check, just in
+// the other direction (scans containing a point, not companies inside a box).
+async function getCandidateUsersForLocation(lat, lng) {
+  return all(`
+    SELECT DISTINCT u.id, u.email, u.profile_json, u.last_alert_sent_at, u.unsubscribe_token
+    FROM users u
+    JOIN scans s ON s.user_id = u.id
+    WHERE u.email_verified = 1 AND u.alerts_enabled = 1 AND u.suspended = 0
+      AND @lat BETWEEN s.south AND s.north
+      AND @lng BETWEEN s.west AND s.east
+  `, { lat, lng });
+}
+
+// One row per (user, job) match, forever — ON CONFLICT DO NOTHING makes this
+// safe to call repeatedly across overlapping check windows, and a job is
+// never re-notified to the same user even after it's been part of a sent
+// digest (sent_at is set once and never cleared).
+async function recordJobAlertMatch(userId, jobId) {
+  await run(`
+    INSERT INTO job_alerts (user_id, job_id, matched_at)
+    VALUES (@user_id, @job_id, @now)
+    ON CONFLICT (user_id, job_id) DO NOTHING
+  `, { user_id: userId, job_id: jobId, now: nowMs() });
+}
+
+async function getUsersWithUnsentAlerts() {
+  return all(`
+    SELECT DISTINCT u.id, u.email, u.last_alert_sent_at, u.unsubscribe_token
+    FROM users u
+    JOIN job_alerts ja ON ja.user_id = u.id AND ja.sent_at IS NULL
+  `);
+}
+
+async function getUnsentAlertsForUser(userId) {
+  return all(`
+    SELECT j.id AS job_id, j.title, j.location, j.url, c.name AS company_name
+    FROM job_alerts ja
+    JOIN jobs j ON j.id = ja.job_id
+    JOIN companies c ON c.id = j.company_id
+    WHERE ja.user_id = @user_id AND ja.sent_at IS NULL
+    ORDER BY ja.matched_at ASC
+  `, { user_id: userId });
+}
+
+async function markAlertsSent(userId, jobIds) {
+  if (!jobIds?.length) return;
+  await run(
+    `UPDATE job_alerts SET sent_at = @now WHERE user_id = @user_id AND job_id = ANY(@job_ids)`,
+    { user_id: userId, job_ids: jobIds, now: nowMs() },
+  );
+  await run(`UPDATE users SET last_alert_sent_at = @now WHERE id = @id`, { id: userId, now: nowMs() });
+}
+
+async function setAlertsEnabled(userId, enabled) {
+  await run(`UPDATE users SET alerts_enabled = @enabled, updated_at = @now WHERE id = @id`,
+    { id: userId, enabled: enabled ? 1 : 0, now: nowMs() });
+}
+
+async function setUnsubscribeToken(userId, token) {
+  await run(`UPDATE users SET unsubscribe_token = @token WHERE id = @id`, { id: userId, token });
+}
+
+async function getUserByUnsubscribeToken(token) {
+  return get(`SELECT * FROM users WHERE unsubscribe_token = @token`, { token });
+}
+
+async function setTrainingDataConsent(userId, enabled) {
+  await run(`UPDATE users SET training_data_consent = @enabled, updated_at = @now WHERE id = @id`,
+    { id: userId, enabled: enabled ? 1 : 0, now: nowMs() });
+}
+
+// Only consenting users' rows — the query itself is the enforcement point
+// for the opt-in requirement, not just an application-layer check.
+async function getConsentingLearnedWeights() {
+  return all(`
+    SELECT lw.user_id, lw.feature_key, lw.weight, lw.sample_count
+    FROM learned_weights lw
+    JOIN users u ON u.id = lw.user_id
+    WHERE u.training_data_consent = 1
+  `);
+}
+
+// Jobs freshly synced within the lookback window, joined to their company —
+// the candidate set the alert-check job matches against.
+async function getRecentlyFetchedJobsWithCompany(sinceMs) {
+  return all(`
+    SELECT j.id AS job_id, j.title AS job_title, j.location AS job_location,
+           c.id AS company_id, c.name AS company_name, c.lat, c.lng, c.opportunities
+    FROM jobs j
+    JOIN companies c ON c.id = j.company_id
+    WHERE j.fetched_at > @since
+  `, { since: sinceMs });
+}
+
 // Pipeline funnel across every user (admin overview).
 async function getStatusCounts() {
   const rows = await all(`SELECT status, COUNT(*) AS n FROM user_company_status GROUP BY status`);
-  const out = { none: 0, interested: 0, applied: 0, skipped: 0 };
+  const out = { none: 0, interested: 0, applied: 0, interviewing: 0, offer: 0, rejected: 0, skipped: 0 };
   let touched = 0;
   for (const row of rows) {
     if (row.status !== 'none') { out[row.status] = Number(row.n); touched += Number(row.n); }
@@ -1004,6 +1175,8 @@ function hydrateUser(row) {
     onboardingComplete: !!row.onboarding_complete,
     suspended: !!row.suspended,
     emailVerified: !!row.email_verified,
+    alertsEnabled: row.alerts_enabled == null ? true : !!row.alerts_enabled,
+    trainingDataConsent: !!row.training_data_consent,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1126,6 +1299,8 @@ module.exports = {
   pool, // exposed for test cleanup only — app code should go through the named functions above
   upsertCompany,
   updateEnrichment,
+  updateScrapeStatus,
+  getCompaniesNeedingRescan,
   setCompanyStatus,
   setCompanyNotes,
   setCompanyUserRating,
@@ -1141,6 +1316,18 @@ module.exports = {
   setJobApplied,
   getJob,
   recordScan,
+  getRecentCoveringScan,
+  getCandidateUsersForLocation,
+  recordJobAlertMatch,
+  getUsersWithUnsentAlerts,
+  getUnsentAlertsForUser,
+  markAlertsSent,
+  setAlertsEnabled,
+  setUnsubscribeToken,
+  getUserByUnsubscribeToken,
+  setTrainingDataConsent,
+  getConsentingLearnedWeights,
+  getRecentlyFetchedJobsWithCompany,
   getTeam,
   updateTeam,
   repairBogusScrapedJobs,

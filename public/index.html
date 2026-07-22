@@ -411,6 +411,22 @@
       <label class="form-label">Email signature</label>
       <textarea class="form-input" id="profSig" rows="2" placeholder="Name, email, phone"></textarea>
 
+      <div class="profile-section-title">Job alerts</div>
+      <p class="form-hint">Get an email when a fresh role matching your skills appears in an area you've scanned.</p>
+      <label class="form-label toggle-row">
+        <input type="checkbox" id="profAlertsEnabled" onchange="App.toggleAlerts(this.checked)" />
+        <div class="toggle-box"><svg width="12" height="12"><use href="#icon-check"></use></svg></div>
+        <span>Email me about new matching jobs</span>
+      </label>
+
+      <div class="profile-section-title">Help improve AreaHunt</div>
+      <p class="form-hint">Off by default. If you turn this on, an anonymized summary of your saved/applied/skipped preferences (never your name, resume, or activity history) can be included in an export used to improve matching. Turning it off (or deleting your account) removes you immediately — nothing is stored separately. See our <a href="/privacy.html" target="_blank" rel="noopener">privacy policy</a>.</p>
+      <label class="form-label toggle-row">
+        <input type="checkbox" id="profTrainingConsent" onchange="App.toggleTrainingConsent(this.checked)" />
+        <div class="toggle-box"><svg width="12" height="12"><use href="#icon-check"></use></svg></div>
+        <span>Contribute anonymized preference data</span>
+      </label>
+
       <div class="profile-section-title">Email account (for sending) <span id="emailAccountStatus" class="label-opt"></span></div>
       <p class="form-hint">Emails send from your own account, not a shared one — this is what makes them land as genuinely from you instead of looking spoofed.</p>
       <label class="form-label">Your email address</label>

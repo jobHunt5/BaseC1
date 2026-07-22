@@ -816,6 +816,8 @@ const AuthGate = (() => {
     if (!me || !session) return getProfile();
     session.profile = { ...defaultProfile(), ...me.profile, email: me.email };
     session.onboardingComplete = me.onboardingComplete;
+    session.alertsEnabled = me.alertsEnabled;
+    session.trainingDataConsent = me.trainingDataConsent;
     saveSession();
     syncLocalProfile(session.profile);
     return session.profile;

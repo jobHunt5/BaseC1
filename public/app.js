@@ -72,6 +72,7 @@ const App = (() => {
   function init() {
     syncHeaderHeight();
     handleVerifyRedirect();
+    handleAlertsOffRedirect();
     AuthGate.boot((sess) => {
       applyUserProfile(sess.profile);
       showVerifyBanner(sess);
@@ -94,6 +95,18 @@ const App = (() => {
     const ok = params.get('verified') === '1';
     toast(ok ? 'Email verified!' : 'That verification link is invalid or has expired', ok ? 'success' : 'error');
     params.delete('verified');
+    const qs = params.toString();
+    history.replaceState({}, '', location.pathname + (qs ? `?${qs}` : ''));
+  }
+
+  // Handles the redirect back from clicking "Turn off job alerts" in an
+  // alert digest email (see server/routes/auth.js's GET /unsubscribe-alerts).
+  function handleAlertsOffRedirect() {
+    const params = new URLSearchParams(location.search);
+    if (!params.has('alerts_off')) return;
+    const ok = params.get('alerts_off') === '1';
+    toast(ok ? "Job alerts turned off — you won't get any more of these emails" : 'That unsubscribe link is invalid', ok ? 'success' : 'error');
+    params.delete('alerts_off');
     const qs = params.toString();
     history.replaceState({}, '', location.pathname + (qs ? `?${qs}` : ''));
   }
@@ -724,7 +737,47 @@ const App = (() => {
       p = profile;
     }
     populateProfileForm(p);
+    const alertsBox = document.getElementById('profAlertsEnabled');
+    if (alertsBox) alertsBox.checked = AuthGate.getSession?.()?.alertsEnabled !== false;
+    const consentBox = document.getElementById('profTrainingConsent');
+    if (consentBox) consentBox.checked = AuthGate.getSession?.()?.trainingDataConsent === true;
     document.getElementById('profileModal').classList.add('show');
+  }
+
+  async function toggleAlerts(enabled) {
+    try {
+      const resp = await fetch('/api/auth/alerts', {
+        method: 'PATCH',
+        headers: { ...AuthGate.authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!resp.ok) throw new Error('failed');
+      const sess = AuthGate.getSession?.();
+      if (sess) sess.alertsEnabled = enabled;
+      toast(enabled ? 'Job alerts turned on' : 'Job alerts turned off', 'success');
+    } catch {
+      toast('Could not update job alerts — try again', 'error');
+      const box = document.getElementById('profAlertsEnabled');
+      if (box) box.checked = !enabled;
+    }
+  }
+
+  async function toggleTrainingConsent(enabled) {
+    try {
+      const resp = await fetch('/api/auth/training-consent', {
+        method: 'PATCH',
+        headers: { ...AuthGate.authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!resp.ok) throw new Error('failed');
+      const sess = AuthGate.getSession?.();
+      if (sess) sess.trainingDataConsent = enabled;
+      toast(enabled ? 'Thanks — you\'re now contributing anonymized data' : 'Turned off — you\'re excluded from future exports', 'success');
+    } catch {
+      toast('Could not update this setting — try again', 'error');
+      const box = document.getElementById('profTrainingConsent');
+      if (box) box.checked = !enabled;
+    }
   }
 
   function closeProfile() {
@@ -1498,10 +1551,28 @@ const App = (() => {
     renderCompaniesNow();
   }
 
+  const STAGE_LABELS = {
+    interested: 'Interested', applied: 'Applied', interviewing: 'Interviewing',
+    offer: 'Offer', rejected: 'Rejected',
+  };
+
+  // Post-apply pipeline stages beyond the original binary applied/not —
+  // each gets its own badge/color instead of collapsing into the same
+  // generic "Applied" tick, so a rejection doesn't look identical to a
+  // company still awaiting a reply.
+  function stageBadge(status) {
+    if (status === 'interviewing') return `<span class="stage-pill stage-interviewing" title="Interviewing">${ic('sparkles', 11)}Interviewing</span>`;
+    if (status === 'offer') return `<span class="stage-pill stage-offer" title="Offer received">${ic('check', 11)}Offer</span>`;
+    if (status === 'rejected') return `<span class="stage-pill stage-rejected" title="Rejected">${ic('close', 11, false)}Rejected</span>`;
+    return '';
+  }
+
   function renderCard(c) {
     const appliedJobs = (c.jobs || []).filter(j => j.applied).length;
     const totalJobs = (c.jobs || []).length;
+    const stage = ['applied', 'interviewing', 'offer', 'rejected'].includes(c.status) ? c.status : null;
     const isApplied = c.status === 'applied' || appliedJobs > 0;
+    const isInPipeline = !!stage || appliedJobs > 0;
     const isSkipped = c.status === 'skipped';
 
     const userKeywords = profileSkillKeywords();
@@ -1575,13 +1646,13 @@ const App = (() => {
       ? `<span class="suspicious-pill" title="${suspiciousCount} job posting${suspiciousCount !== 1 ? 's' : ''} here has red flags — check before applying">${ic('warning', 11)}Check listing${suspiciousCount !== 1 ? 's' : ''}</span>` : '';
 
     return `
-      <div class="company-card ${isApplied ? 'applied' : ''} ${isSkipped ? 'skipped' : ''} ${!isApplied && verifiedBadge ? 'is-verified' : ''} ${String(state.selectedId) === String(c.id) ? 'selected' : ''}" data-id="${cid}">
+      <div class="company-card ${isInPipeline ? 'applied' : ''} ${isSkipped ? 'skipped' : ''} ${!isInPipeline && verifiedBadge ? 'is-verified' : ''} ${String(state.selectedId) === String(c.id) ? 'selected' : ''}" data-id="${cid}">
         <div class="card-top">
           ${logo}
           <div class="card-info">
             <div class="company-name-row">
               <span class="company-name">${escapeHtml(c.name)}</span>
-              ${isApplied ? `<span class="applied-tick" title="Applied">${ic('check', 11, false)}</span>` : ''}
+              ${stage && stage !== 'applied' ? stageBadge(stage) : (isApplied ? `<span class="applied-tick" title="Applied">${ic('check', 11, false)}</span>` : '')}
               ${verifiedBadge}
               ${matchBadge}
               ${learnedBadge}
@@ -2145,7 +2216,10 @@ const App = (() => {
   }
 
   function greetingName(c) {
-    // "Hi [Company] team" reads better than "Hi The Coffee Shop,"
+    // Address the identified hiring contact by first name when we have one
+    // — "Hi [Company] team" is the fallback when no contact was found.
+    const contact = c.profile?.hiring_contact;
+    if (contact?.name) return contact.name.split(' ')[0];
     return `${c.name} team`;
   }
 
@@ -2199,11 +2273,25 @@ const App = (() => {
     }
 
     const cid = escapeAttr(c.id);
+    const contact = c.profile?.hiring_contact || null;
     const verified = isVerifiedEmail(c);
-    const hasEmail = !!c.email;
+    const hasEmail = !!c.email || !!contact?.email;
     const subject = buildOutreachSubject(c);
     const body = buildOutreachBody(c);
     const variants = _outreachVariants[c.id] || [];
+
+    const hiringContactHTML = contact ? `
+      <div class="hiring-contact-card">
+        <div class="hiring-contact-main">
+          <span class="hiring-contact-name">${escapeHtml(contact.name)}</span>
+          ${contact.title ? `<span class="hiring-contact-title">${escapeHtml(contact.title)}</span>` : ''}
+        </div>
+        <div class="hiring-contact-reason">${escapeHtml(contact.reason)}</div>
+        <div class="hiring-contact-links">
+          ${contact.email ? `<a href="mailto:${escapeAttr(contact.email)}">${ic('email', 11)}${escapeHtml(contact.email)}</a>` : ''}
+          ${contact.linkedin_verified && contact.linkedin_url ? `<a href="${escapeAttr(contact.linkedin_url)}" target="_blank" rel="noopener">${ic('external-link', 11, false)}LinkedIn</a>` : ''}
+        </div>
+      </div>` : '';
 
     const toStatus = verified
       ? `<span class="email-ok">${ic('check', 12)}Verified</span>`
@@ -2234,11 +2322,12 @@ const App = (() => {
 
     return `
       <div class="outreach-section" id="outreachSection-${cid}">
+        ${hiringContactHTML}
         <div class="outreach-top">
           <label class="outreach-field-label" style="margin:0">To ${toStatus}</label>
           ${verifyBtn}
         </div>
-        <input type="email" class="outreach-subject-input" id="outreachTo-${cid}" value="${escapeAttr(c.email || '')}"
+        <input type="email" class="outreach-subject-input" id="outreachTo-${cid}" value="${escapeAttr(contact?.email || c.email || '')}"
           placeholder="careers@company.com" oninput="App.onOutreachToInput('${cid}')" />
         <div class="outreach-verify-note" id="outreachVerifyNote-${cid}"></div>
 
@@ -2643,9 +2732,13 @@ const App = (() => {
       </div>
       <div class="detail-section">
         <div class="detail-label">Your tracking</div>
-        <button class="apply-big ${c.status === 'applied' ? 'applied' : ''}" onclick="App.toggleStatus('${c.id}', 'applied')">
-          ${c.status === 'applied' ? ic('check', 14) + 'Applied — click to undo' : 'Mark whole company as applied (manual)'}
-        </button>
+        <div class="stage-control">
+          ${['interested', 'applied', 'interviewing', 'offer', 'rejected'].map(stage => `
+            <button class="stage-btn stage-${stage} ${c.status === stage ? 'active' : ''}" onclick="App.toggleStatus('${c.id}', '${stage}')">
+              ${STAGE_LABELS[stage]}
+            </button>
+          `).join('')}
+        </div>
         <div class="rating-row">${stars}</div>
         <textarea class="notes-area" placeholder="Add notes about this company…" oninput="App.saveNotes('${c.id}', this.value)">${escapeHtml(c.notes || '')}</textarea>
       </div>
@@ -3274,6 +3367,7 @@ const App = (() => {
     verifyCompanyEmail, generateOutreachEmails, applyOutreachVariant, sendOutreachEmail,
     onOutreachToInput, openMailApp,
     openProfile, closeProfile, closeProfileBackdrop, saveProfile, logout, deleteAccount, resendVerification,
+    toggleAlerts, toggleTrainingConsent,
     downloadResume, downloadCoverLetter,
     resolveTeamLinkedIn, discoverPeople, reVerifyCompany, toggleMapMode,
     openAccountMenu, resetListControls, loadMoreCompanies,

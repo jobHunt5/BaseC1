@@ -28,6 +28,8 @@ const { applyToProcessEnv } = require('./services/settingsService');
 const db = require('./db');
 const { repairOpportunityTargetClassification, repairBogusScrapedJobs, repairBogusTeamMembers } = db;
 const { warmup: warmupPdfEngine } = require('./services/resumeService');
+const { enqueueMany } = require('./services/deepScanQueue');
+const { runJobAlertsCheck } = require('./services/jobAlertService');
 const {
   status: serperStatus, getUsageToday: getSerperUsageToday, budgetLimit: getSerperBudgetLimit,
 } = require('./services/serperClient');
@@ -116,7 +118,10 @@ app.get('/api/health', (req, res) => {
     serperDailyBudget: getSerperBudgetLimit(),
     enrichLimit: parseInt(process.env.ENRICH_LIMIT || '0', 10) || null,
     enrichConcurrency: parseInt(process.env.ENRICH_CONCURRENCY || '6', 10),
-    supportedAts: ['greenhouse', 'lever', 'workable', 'ashby', 'jobadder'],
+    supportedAts: [
+      'greenhouse', 'lever', 'workable', 'ashby', 'jobadder',
+      'smartrecruiters', 'recruitee', 'breezy', 'teamtailor', 'bamboohr', 'personio', 'workday',
+    ],
     trustMode: 'verified-first',
     deepScanQueue: true,
     hasOpenAiKey: !!process.env.OPENAI_API_KEY,
@@ -171,6 +176,20 @@ if (require.main === module) {
       repairOpportunityTargetClassification().catch(err => console.error('[repair]', err));
       repairBogusScrapedJobs().catch(err => console.error('[repair]', err));
       repairBogusTeamMembers().catch(err => console.error('[repair]', err));
+      // Re-queue companies that never finished (or never started) a deep
+      // scan — the queue itself is in-memory only, so a restart would
+      // otherwise silently drop all of this instead of picking it back up.
+      db.getCompaniesNeedingRescan(200)
+        .then(ids => enqueueMany(ids))
+        .catch(err => console.error('[deep-scan] boot rescan failed', err));
+
+      // Proactive job-alert digests — checks every 30 min for freshly
+      // scraped jobs matching a user's skills in an area they've scanned.
+      // Only fires reliably because the existing UptimeRobot health-check
+      // monitor keeps this free-plan dyno from idling between requests.
+      setInterval(() => {
+        runJobAlertsCheck().catch(err => console.error('[job-alerts] check failed', err));
+      }, 30 * 60 * 1000);
     });
   });
 }

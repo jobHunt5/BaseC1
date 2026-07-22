@@ -782,6 +782,30 @@ select.form-input:focus {
 .apply-big:hover { background: #7c74ff; }
 .apply-big.applied { background: var(--green); }
 .apply-big.applied:hover { background: #3d9a6a; }
+
+.stage-control { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.stage-btn { flex: 1 1 auto; padding: 8px 10px; background: var(--card); border: 1px solid var(--border); color: var(--text); border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s; white-space: nowrap; }
+.stage-btn:hover { border-color: var(--accent); }
+.stage-btn.stage-interested.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.stage-btn.stage-applied.active { background: var(--green); border-color: var(--green); color: #fff; }
+.stage-btn.stage-interviewing.active { background: var(--yellow); border-color: var(--yellow); color: #1a1a1a; }
+.stage-btn.stage-offer.active { background: var(--green); border-color: var(--green); color: #fff; }
+.stage-btn.stage-rejected.active { background: var(--red); border-color: var(--red); color: #fff; }
+
+.stage-pill { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 6px; line-height: 1.4; }
+.stage-pill .ui-icon { fill: currentColor; }
+.stage-pill.stage-interviewing { background: rgba(255, 200, 87, 0.15); color: var(--yellow); }
+.stage-pill.stage-offer { background: rgba(76, 175, 125, 0.15); color: var(--green); }
+.stage-pill.stage-rejected { background: rgba(255, 107, 107, 0.15); color: var(--red); }
+
+.hiring-contact-card { background: rgba(108, 99, 255, 0.08); border: 1px solid rgba(108, 99, 255, 0.25); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.hiring-contact-main { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.hiring-contact-name { font-weight: 700; font-size: 13px; color: var(--text); }
+.hiring-contact-title { font-size: 12px; color: var(--muted); }
+.hiring-contact-reason { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.hiring-contact-links { display: flex; gap: 12px; margin-top: 6px; }
+.hiring-contact-links a { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--accent); text-decoration: none; }
+.hiring-contact-links a:hover { text-decoration: underline; }
 .notes-area { width: 100%; background: var(--card); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px; font-size: 13px; resize: vertical; min-height: 80px; font-family: inherit; outline: none; }
 .notes-area:focus { border-color: var(--accent); }
 .rating-row { display: flex; gap: 6px; }

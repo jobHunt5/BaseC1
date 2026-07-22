@@ -143,9 +143,10 @@
   function renderOverview(stats, analytics) {
     const panel = document.getElementById('panel-overview');
     const { scans, pipeline, job_quality, ai_fit, user_count, config } = stats;
-    const pipelineTotal = (pipeline.none || 0) + (pipeline.interested || 0) + (pipeline.applied || 0) + (pipeline.skipped || 0);
-    const savedOrApplied = Math.max(1, (pipeline.interested || 0) + (pipeline.applied || 0));
-    const applyRate = Math.round(((pipeline.applied || 0) / savedOrApplied) * 100);
+    const inPipelineCount = (pipeline.applied || 0) + (pipeline.interviewing || 0) + (pipeline.offer || 0) + (pipeline.rejected || 0);
+    const pipelineTotal = (pipeline.none || 0) + (pipeline.interested || 0) + inPipelineCount + (pipeline.skipped || 0);
+    const savedOrApplied = Math.max(1, (pipeline.interested || 0) + inPipelineCount);
+    const applyRate = Math.round((inPipelineCount / savedOrApplied) * 100);
 
     const configRow = (label, ok) => `
       <div class="admin-config-row">
@@ -269,6 +270,9 @@
         { label: 'Untouched', value: pipeline.none || 0, color: '#4a4a5e' },
         { label: 'Saved', value: pipeline.interested || 0, color: AdminCharts.COLORS.blue },
         { label: 'Applied', value: pipeline.applied || 0, color: AdminCharts.STATUS.good },
+        { label: 'Interviewing', value: pipeline.interviewing || 0, color: AdminCharts.COLORS.yellow },
+        { label: 'Offer', value: pipeline.offer || 0, color: AdminCharts.COLORS.violet },
+        { label: 'Rejected', value: pipeline.rejected || 0, color: AdminCharts.COLORS.red },
         { label: 'Skipped', value: pipeline.skipped || 0, color: '#4a4a5e' },
       ],
     });

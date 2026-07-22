@@ -23,7 +23,7 @@ const express = require('express');
 const crypto = require('crypto');
 const {
   upsertUser, getUserByEmail, getUserById, getAllSettings, setSetting, setPasswordHash, deleteUser,
-  setEmailVerifyToken, verifyEmailByToken,
+  setEmailVerifyToken, verifyEmailByToken, getUserByUnsubscribeToken, setAlertsEnabled, setTrainingDataConsent,
 } = require('../db');
 const { encrypt } = require('../services/cryptoService');
 const { hashPassword, verifyPassword } = require('../services/passwordService');
@@ -273,6 +273,8 @@ router.get('/me', async (req, res) => {
     profile: sanitizeProfile(user.profile),
     onboardingComplete: user.onboardingComplete,
     emailVerified: user.emailVerified,
+    alertsEnabled: user.alertsEnabled,
+    trainingDataConsent: user.trainingDataConsent,
   });
 });
 
@@ -282,6 +284,35 @@ router.get('/me', async (req, res) => {
 router.get('/verify-email', async (req, res) => {
   const user = await verifyEmailByToken(String(req.query.token || ''));
   res.redirect(user ? '/?verified=1' : '/?verified=0');
+});
+
+// Public, token-based one-click unsubscribe — clicked from a job-alert
+// email, so there's no session to authenticate against. Same
+// redirect-with-a-query-flag pattern as verify-email above.
+router.get('/unsubscribe-alerts', async (req, res) => {
+  const user = await getUserByUnsubscribeToken(String(req.query.token || ''));
+  if (user) await setAlertsEnabled(user.id, false);
+  res.redirect(user ? '/?alerts_off=1' : '/?alerts_off=0');
+});
+
+router.patch('/alerts', async (req, res) => {
+  const user = await getUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  const { enabled } = req.body || {};
+  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled (boolean) required' });
+  await setAlertsEnabled(user.id, enabled);
+  res.json({ ok: true, enabled });
+});
+
+// Opt-in only, off by default — see trainingExportService.js for what this
+// actually gates (an anonymized, opt-in-only export of preference weights).
+router.patch('/training-consent', async (req, res) => {
+  const user = await getUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  const { enabled } = req.body || {};
+  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled (boolean) required' });
+  await setTrainingDataConsent(user.id, enabled);
+  res.json({ ok: true, enabled });
 });
 
 // Rate-limited the same as login attempts — reuses the per-(ip,email)
