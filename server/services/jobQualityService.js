@@ -25,10 +25,31 @@ const RED_FLAG_RULES = [
 // Positive signals — reduce risk, on top of the source-confidence baseline.
 function positiveAdjustments(job, company) {
   let bonus = 0;
-  if (job.posted_at) bonus += 0.05;
+  bonus += freshnessBonus(job.posted_at);
   if (company?.email_verified) bonus += 0.05;
   if (company?.website && job.url && sameHost(job.url, company.website)) bonus += 0.05;
   return bonus;
+}
+
+// A recently-posted listing is the closest available signal that a role is
+// genuinely still open rather than already informally filled — graduated
+// instead of a flat bonus so a job posted yesterday outranks one from
+// 6 months ago instead of scoring identically to it.
+function freshnessBonus(postedAt) {
+  if (!postedAt) return 0;
+  const days = (Date.now() - postedAt) / (24 * 60 * 60 * 1000);
+  if (days <= 7) return 0.12;
+  if (days <= 30) return 0.07;
+  if (days <= 90) return 0.02;
+  return 0;
+}
+
+function freshnessLabel(postedAt) {
+  if (!postedAt) return null;
+  const days = (Date.now() - postedAt) / (24 * 60 * 60 * 1000);
+  if (days <= 7) return 'new';
+  if (days <= 30) return 'recent';
+  return 'older';
 }
 
 function sameHost(a, b) {
@@ -67,4 +88,4 @@ function scoreJobQuality(job, company) {
   return { score, flags };
 }
 
-module.exports = { scoreJobQuality };
+module.exports = { scoreJobQuality, freshnessLabel };

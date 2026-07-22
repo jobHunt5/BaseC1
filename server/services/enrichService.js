@@ -16,6 +16,7 @@
 
 const axios = require('axios');
 const cheerio = require('cheerio');
+const psl = require('psl');
 const { isPlausibleEmail, pickTrustedEmail, isJunkDescription, sanitizeDescription, pickBestDescription } = require('./trustService');
 const { isValidTeamMember, isPlaceName, looksLikeAddress, isServiceName, isSectionHeading, looksLikeOfferingHeading, looksLikeServiceBio, looksLikeServiceTitle, looksLikeServiceMenu } = require('./teamTrustService');
 const { URL } = require('url');
@@ -55,9 +56,13 @@ const CRAWL_PATHS = [
 const TEAM_LINK_RE = /\b(team|about\s*us|who\s*we\s*are|who\s*are\s*we|our\s*people|our\s*story|leadership|meet\s*(the|our)\s*team|staff)\b/i;
 const TEAM_URL_RE  = /\/(about|team|people|staff|leadership|who-are-we|who-we-are|our-team|meet-the-team|meet-our-team|our-story)(\/|$)/i;
 
-// Probed only when no careers page was linked from the home page.
+// Probed only when no careers page was linked from the home page. Kept in
+// sync with CAREER_KEYWORDS above — that list is used for link-text/href
+// matching, this one for direct HEAD-probing, so a path variant missing
+// here means we'd only ever find it if the homepage happened to link it.
 const COMMON_CAREER_PATHS = [
-  '/careers', '/career', '/jobs', '/join-us', '/work-with-us',
+  '/careers', '/career', '/jobs', '/join-us', '/join-our-team', '/work-with-us',
+  '/we-are-hiring', '/opportunities', '/vacancies', '/open-roles',
   '/about/careers', '/company/careers',
 ];
 
@@ -235,7 +240,7 @@ async function enrichCompany(company, { mode = 'full' } = {}) {
       /work\s+with\s+us|join\s+(our\s+)?team|we['’]re\s+hiring/.test(text)
     ) {
       const abs = absolutize(href, homeUrl);
-      if (abs && sameOrigin(abs, homeUrl)) candidates.add(abs);
+      if (abs && sameRegistrableDomain(abs, homeUrl)) candidates.add(abs);
     }
   });
   let careersUrl = pickBestCareers(Array.from(candidates));
@@ -293,7 +298,7 @@ function discoverTeamPageUrls(html, baseUrl) {
     const lower = href.toLowerCase();
     if (TEAM_URL_RE.test(lower) || TEAM_LINK_RE.test(text) || TEAM_LINK_RE.test(lower)) {
       const abs = absolutize(href, baseUrl);
-      if (abs && sameOrigin(abs, baseUrl)) urls.add(abs);
+      if (abs && sameRegistrableDomain(abs, baseUrl)) urls.add(abs);
     }
   });
   return Array.from(urls).slice(0, 6);
@@ -481,12 +486,15 @@ function extractTeam(html, pageUrl = '') {
     const container = $el.closest('[itemscope]');
     const title = cleanPersonTitle(container.find('[itemprop="jobTitle"]').first().text().trim());
     const liAttr = container.find('a[href*="linkedin.com/in/"]').first().attr('href');
+    const mailtoAttr = container.find('a[href^="mailto:"]').first().attr('href');
+    const containerEmail = mailtoAttr ? cleanEmail(mailtoAttr.replace(/^mailto:/i, '')) : null;
     out.push({
       name,
       title: title || '',
       bio: '',
       linkedin_url: liAttr ? normalizeLinkedIn(liAttr) : null,
       linkedin_source: liAttr ? 'website' : null,
+      email: (containerEmail && isPlausibleEmailLocal(containerEmail)) ? containerEmail : null,
     });
   });
 
@@ -545,12 +553,14 @@ function buildPersonRecord($, $el, name) {
   const title = cleanPersonTitle(findTitleNear($el));
   const bio = findBioNear($el);
   const linkedin_url = findLinkedInNear($el);
+  const email = findEmailNear($el);
   return {
     name,
     title: title || '',
     bio: bio || '',
     linkedin_url: linkedin_url || null,
     linkedin_source: linkedin_url ? 'website' : null,
+    email: email || null,
   };
 }
 
@@ -593,6 +603,28 @@ function findLinkedInNear($el) {
     if (tag.match(/^h[1-6]$/) && (looksLikeName(txt) || TEAM_STOP_RE.test(txt))) break;
     const a = next.find('a[href*="linkedin.com/in/"]').addBack('a[href*="linkedin.com/in/"]').first();
     if (a && a.attr('href')) return normalizeLinkedIn(a.attr('href'));
+    next = next.next();
+  }
+  return null;
+}
+
+// Same proximity search as findLinkedInNear, but for a personal mailto: link
+// sitting in the same team-card block — some small agency/team pages do
+// publish an individual email next to their name, distinct from the
+// generic careers@/info@ address picked up elsewhere. Never guessed, only
+// ever a literal mailto: href.
+function findEmailNear($el) {
+  let next = $el.next();
+  for (let i = 0; i < 12 && next.length; i++) {
+    const tag = (next[0].tagName || '').toLowerCase();
+    const txt = next.text().replace(/\s+/g, ' ').trim();
+    if (tag.match(/^h[1-6]$/) && (looksLikeName(txt) || TEAM_STOP_RE.test(txt))) break;
+    const a = next.find('a[href^="mailto:"]').addBack('a[href^="mailto:"]').first();
+    const href = a && a.attr('href');
+    if (href) {
+      const email = cleanEmail(href.replace(/^mailto:/i, ''));
+      if (isPlausibleEmailLocal(email)) return email;
+    }
     next = next.next();
   }
   return null;
@@ -758,31 +790,49 @@ function absolutize(href, base) {
   catch { return null; }
 }
 
-function sameOrigin(a, b) {
-  try { return new URL(a).origin === new URL(b).origin; }
-  catch { return false; }
+// A careers page is very often hosted on a subdomain (careers.company.com,
+// jobs.company.com) of the homepage's domain — sameOrigin() rejects that
+// outright since it compares the full origin including host. This compares
+// registrable domains instead (via the public suffix list, so compound TLDs
+// like .com.au / .co.uk are handled correctly), so careers.acme.com.au still
+// matches acme.com.au but a copycat on careers.acme-jobs.com does not.
+function sameRegistrableDomain(a, b) {
+  try {
+    return psl.get(new URL(a).hostname) === psl.get(new URL(b).hostname);
+  } catch { return false; }
 }
 
 async function safeFetch(url, { method = 'get', timeout = TIMEOUT } = {}) {
-  try {
-    const resp = await axios.request({
-      url,
-      method,
-      timeout,
-      maxRedirects: 5,
-      validateStatus: () => true,
-      responseType: method === 'head' ? undefined : 'text',
-      headers: {
-        'User-Agent': UA,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-      },
-    });
-    if (resp.status >= 400) return method === 'head' ? { status: resp.status, body: '' } : null;
-    return { status: resp.status, body: typeof resp.data === 'string' ? resp.data : '' };
-  } catch {
-    return null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await axios.request({
+        url,
+        method,
+        timeout,
+        maxRedirects: 5,
+        validateStatus: () => true,
+        responseType: method === 'head' ? undefined : 'text',
+        headers: {
+          'User-Agent': UA,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+        },
+      });
+      // A 4xx is a real answer (page doesn't exist) — don't retry it, only
+      // transient 5xx/network errors below get a second attempt.
+      if (resp.status >= 500 && attempt === 0) { await delay(300); continue; }
+      if (resp.status >= 400) return method === 'head' ? { status: resp.status, body: '' } : null;
+      return { status: resp.status, body: typeof resp.data === 'string' ? resp.data : '' };
+    } catch {
+      if (attempt === 0) { await delay(300); continue; }
+      return null;
+    }
   }
+  return null;
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function stripText($) {
@@ -850,4 +900,4 @@ function extractJsonLdDescription($, companyName) {
   return pickBestDescription(candidates, companyName);
 }
 
-module.exports = { enrichCompany };
+module.exports = { enrichCompany, sameRegistrableDomain, seniorityRank, extractTeam };

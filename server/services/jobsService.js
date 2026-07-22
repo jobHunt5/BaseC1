@@ -18,6 +18,21 @@ const { atsSlugMatchesCompany } = require('./trustService');
 const TIMEOUT = parseInt(process.env.ENRICH_TIMEOUT_MS || '8000', 10);
 const UA = process.env.ENRICH_USER_AGENT || 'AreaHuntBot/1.0';
 
+// Several ATS APIs (Workable, SmartRecruiters, Teamtailor, Workday) paginate
+// server-side and only return one page unless we ask for more — this caps
+// how many pages we'll follow per company so one huge job board can't turn
+// a single scrape into dozens of sequential requests.
+const MAX_ATS_PAGE_JOBS = 300;
+
+// Subdomains that are the ATS vendor's own marketing/help/app surface, not a
+// tenant company — a bare host match would otherwise misfire on these.
+const RESERVED_ATS_SLUGS = new Set(['www', 'app', 'help', 'support', 'status', 'docs', 'blog', 'api', 'mail', 'careers', 'jobs']);
+
+function slugOrNull(m) {
+  const s = m?.[1]?.toLowerCase();
+  return s && !RESERVED_ATS_SLUGS.has(s) ? s : null;
+}
+
 const ATS_PATTERNS = [
   {
     name: 'greenhouse',
@@ -42,6 +57,55 @@ const ATS_PATTERNS = [
     test: (u) => /jobs\.ashbyhq\.com\/[a-z0-9-]+/i.test(u),
     extractSlug: (u) => u.match(/jobs\.ashbyhq\.com\/([a-z0-9-]+)/i)?.[1],
     fetch: fetchAshby,
+  },
+  {
+    name: 'smartrecruiters',
+    test: (u) => /smartrecruiters\.com\/[a-z0-9._-]+/i.test(u),
+    extractSlug: (u) => slugOrNull(u.match(/smartrecruiters\.com\/([a-z0-9._-]+)/i)),
+    fetch: fetchSmartRecruiters,
+  },
+  {
+    name: 'recruitee',
+    test: (u) => /[a-z0-9-]+\.recruitee\.com/i.test(u),
+    extractSlug: (u) => slugOrNull(u.match(/([a-z0-9-]+)\.recruitee\.com/i)),
+    fetch: fetchRecruitee,
+  },
+  {
+    name: 'breezy',
+    test: (u) => /[a-z0-9-]+\.breezy\.hr/i.test(u),
+    extractSlug: (u) => slugOrNull(u.match(/([a-z0-9-]+)\.breezy\.hr/i)),
+    fetch: fetchBreezy,
+  },
+  {
+    name: 'teamtailor',
+    test: (u) => /[a-z0-9-]+\.teamtailor\.com/i.test(u),
+    extractSlug: (u) => slugOrNull(u.match(/([a-z0-9-]+)\.teamtailor\.com/i)),
+    fetch: fetchTeamtailor,
+  },
+  {
+    name: 'bamboohr',
+    test: (u) => /[a-z0-9-]+\.bamboohr\.com/i.test(u),
+    extractSlug: (u) => slugOrNull(u.match(/([a-z0-9-]+)\.bamboohr\.com/i)),
+    fetch: fetchBambooHr,
+  },
+  {
+    name: 'personio',
+    test: (u) => /[a-z0-9-]+\.jobs\.personio\.(?:com|de)/i.test(u),
+    extractSlug: (u) => slugOrNull(u.match(/([a-z0-9-]+)\.jobs\.personio\.(?:com|de)/i)),
+    fetch: fetchPersonio,
+  },
+  {
+    name: 'workday',
+    // Tenant/wd-number/site all live in the URL itself, so extractSlug packs
+    // them into one delimited string — atsSlugMatchesCompany and safeAts
+    // both treat the slug as an opaque string, so this needs no changes
+    // downstream; fetchWorkday just splits it back apart.
+    test: (u) => /[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com\/[a-z0-9_-]+/i.test(u),
+    extractSlug: (u) => {
+      const m = u.match(/([a-z0-9-]+)\.wd(\d+)\.myworkdayjobs\.com\/([a-z0-9_-]+)/i);
+      return m ? `${m[1]}|${m[2]}|${m[3]}` : null;
+    },
+    fetch: fetchWorkday,
   },
 ];
 
@@ -114,7 +178,32 @@ function mergeJobLists(primary, secondary) {
   return [...byTitle.values()].slice(0, 25);
 }
 
-async function scrapeHtmlForJobs(html, baseUrl, company) {
+// One page of a paginated careers listing is easy to mistake for the whole
+// board (e.g. a WordPress/Webflow site showing "20 of 60 roles"). Following
+// a single next-page link at least catches the common 2-page case without
+// risking a runaway crawl — capped at MAX_PAGINATION_HOPS regardless of how
+// many "next" links a site chains together.
+const MAX_PAGINATION_HOPS = 1;
+
+const NEXT_PAGE_TEXT_RE = /^(next|older( (jobs|roles|posts))?|more (jobs|roles)|load more|»|›|>)$/i;
+
+function findNextPageUrl($, baseUrl) {
+  const relNext = $('a[rel~="next"]').first().attr('href');
+  if (relNext) return absolutize(relNext, baseUrl);
+
+  let found = null;
+  $('a[href]').each((_, a) => {
+    const $a = $(a);
+    const text = ($a.text() || '').replace(/\s+/g, ' ').trim();
+    if (NEXT_PAGE_TEXT_RE.test(text)) {
+      found = absolutize($a.attr('href'), baseUrl);
+      return false;
+    }
+  });
+  return found;
+}
+
+async function scrapeHtmlForJobs(html, baseUrl, company, depth = 0) {
   const jsonLdJobs = filterPlausibleJobs(extractJsonLdJobs(html, baseUrl), baseUrl);
   if (jsonLdJobs.length) return tag(jsonLdJobs, 'json-ld');
 
@@ -139,15 +228,35 @@ async function scrapeHtmlForJobs(html, baseUrl, company) {
   }
 
   const scraped = filterPlausibleJobs(scrapeCareersHtml($, baseUrl), baseUrl);
-  if (scraped.length) return tag(scraped, 'careers-page');
+  const cards = scraped.length ? [] : filterPlausibleJobs(scrapeJobCards($, baseUrl), baseUrl);
+  const listed = scraped.length ? scraped : cards;
 
-  const cards = filterPlausibleJobs(scrapeJobCards($, baseUrl), baseUrl);
-  if (cards.length) return tag(cards, 'careers-page');
+  if (listed.length) {
+    const merged = await withNextPage(listed, $, baseUrl, company, depth);
+    return tag(merged, 'careers-page');
+  }
 
   const prose = filterPlausibleJobs(extractProseJobs($, baseUrl), baseUrl);
   if (prose.length) return tag(prose, 'careers-page');
 
   return [];
+}
+
+async function withNextPage(jobs, $, baseUrl, company, depth) {
+  if (depth >= MAX_PAGINATION_HOPS) return jobs;
+  const nextUrl = findNextPageUrl($, baseUrl);
+  if (!nextUrl || nextUrl === baseUrl || !sameHostname(nextUrl, baseUrl)) return jobs;
+
+  const nextHtml = await fetchHtml(nextUrl);
+  if (!nextHtml) return jobs;
+
+  const nextJobs = await scrapeHtmlForJobs(nextHtml, nextUrl, company, depth + 1);
+  return mergeJobLists(jobs, nextJobs);
+}
+
+function sameHostname(a, b) {
+  try { return new URL(a).hostname.replace(/^www\./, '') === new URL(b).hostname.replace(/^www\./, ''); }
+  catch { return false; }
 }
 
 function matchAts(url) {
@@ -327,28 +436,44 @@ async function fetchLever(slug) {
   });
 }
 
+function mapWorkableJob(j, slug) {
+  const loc = [j.city, j.region, j.country].filter(Boolean).join(', ');
+  const sal = j.salary || {};
+  return {
+    title: j.title,
+    location: loc,
+    url: `https://apply.workable.com/${slug}/j/${j.shortcode}/`,
+    job_type: j.employment_type || '',
+    salary: formatSalaryRange(sal.salary_from, sal.salary_to, sal.salary_currency, 'year'),
+    department: j.department || '',
+    description: snippet(stripHtml(j.description || '')),
+    posted_at: toMs(j.created_at || j.published_on),
+    closes_at: null,
+    remote: !!(j.remote || j.telecommuting || isRemoteText(loc)),
+  };
+}
+
+// Workable's own board UI paginates past ~50 results, but the API silently
+// returns only its first page unless offset/limit are set explicitly —
+// looping here is the difference between "we saw 50 roles" and "we saw all
+// of them" for any account with a bigger board. Capped at MAX_ATS_PAGE_JOBS
+// so one huge account can't turn a single scrape into a slow API hammering.
 async function fetchWorkable(slug) {
   const url = `https://apply.workable.com/api/v3/accounts/${encodeURIComponent(slug)}/jobs`;
-  const resp = await axios.post(url, { query: '', location: {}, department: [], workplace: [], remote: [] }, {
-    timeout: TIMEOUT,
-    headers: { 'User-Agent': UA, 'Content-Type': 'application/json' },
-  });
-  return (resp.data?.results || []).map(j => {
-    const loc = [j.city, j.region, j.country].filter(Boolean).join(', ');
-    const sal = j.salary || {};
-    return {
-      title: j.title,
-      location: loc,
-      url: `https://apply.workable.com/${slug}/j/${j.shortcode}/`,
-      job_type: j.employment_type || '',
-      salary: formatSalaryRange(sal.salary_from, sal.salary_to, sal.salary_currency, 'year'),
-      department: j.department || '',
-      description: snippet(stripHtml(j.description || '')),
-      posted_at: toMs(j.created_at || j.published_on),
-      closes_at: null,
-      remote: !!(j.remote || j.telecommuting || isRemoteText(loc)),
-    };
-  });
+  const pageSize = 50;
+  const all = [];
+  for (let offset = 0; offset < MAX_ATS_PAGE_JOBS; offset += pageSize) {
+    const resp = await axios.post(url, {
+      query: '', location: {}, department: [], workplace: [], remote: [], limit: pageSize, offset,
+    }, {
+      timeout: TIMEOUT,
+      headers: { 'User-Agent': UA, 'Content-Type': 'application/json' },
+    });
+    const page = resp.data?.results || [];
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return all.map(j => mapWorkableJob(j, slug));
 }
 
 async function fetchAshby(slug) {
@@ -384,6 +509,223 @@ async function fetchAshby(slug) {
     closes_at: toMs(j.applicationDeadline),
     remote: !!j.isRemote || isRemoteText(j.locationName),
   }));
+}
+
+function mapSmartRecruitersJobs(data, slug) {
+  return (data?.content || []).map(j => {
+    const loc = j.location || {};
+    const location = [loc.city, loc.region, loc.country].filter(Boolean).join(', ');
+    return {
+      title: j.name,
+      location,
+      url: j.actions?.apply?.url || `https://jobs.smartrecruiters.com/${slug}/${j.id}`,
+      job_type: j.typeOfEmployment?.label || '',
+      salary: '',
+      department: j.department?.label || j.function?.label || '',
+      description: '',
+      posted_at: toMs(j.releasedDate),
+      closes_at: null,
+      remote: !!loc.remote || isRemoteText(location),
+    };
+  });
+}
+
+async function fetchSmartRecruiters(slug) {
+  const url = `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(slug)}/postings`;
+  const pageSize = 100;
+  const all = [];
+  let totalFound = Infinity;
+  for (let offset = 0; offset < Math.min(totalFound, MAX_ATS_PAGE_JOBS); offset += pageSize) {
+    const resp = await axios.get(url, {
+      timeout: TIMEOUT, headers: { 'User-Agent': UA }, params: { limit: pageSize, offset },
+    });
+    const page = resp.data?.content || [];
+    totalFound = resp.data?.totalFound ?? page.length;
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return mapSmartRecruitersJobs({ content: all }, slug);
+}
+
+function mapRecruiteeJobs(data) {
+  return (data?.offers || []).map(j => {
+    const location = [j.city, j.country].filter(Boolean).join(', ');
+    return {
+      title: j.title,
+      location,
+      url: j.careers_url || j.careers_apply_url || '',
+      job_type: j.employment_type_code || '',
+      salary: '',
+      department: j.department || '',
+      description: snippet(stripHtml(j.description || '')),
+      posted_at: toMs(j.created_at || j.published_at),
+      closes_at: null,
+      remote: !!j.remote || isRemoteText(location),
+    };
+  });
+}
+
+async function fetchRecruitee(slug) {
+  const url = `https://${encodeURIComponent(slug)}.recruitee.com/api/offers/`;
+  const resp = await axios.get(url, { timeout: TIMEOUT, headers: { 'User-Agent': UA } });
+  return mapRecruiteeJobs(resp.data);
+}
+
+function mapBreezyJobs(data) {
+  return (Array.isArray(data) ? data : []).map(j => {
+    const location = j.location?.name || '';
+    return {
+      title: j.name,
+      location,
+      url: j.url || '',
+      job_type: j.type || '',
+      salary: '',
+      department: typeof j.department === 'string' ? j.department : (j.department?.name || ''),
+      description: '',
+      posted_at: toMs(j.published_date),
+      closes_at: null,
+      remote: isRemoteText(location) || isRemoteText(j.type),
+    };
+  });
+}
+
+async function fetchBreezy(slug) {
+  const url = `https://${encodeURIComponent(slug)}.breezy.hr/json`;
+  const resp = await axios.get(url, { timeout: TIMEOUT, headers: { 'User-Agent': UA } });
+  return mapBreezyJobs(resp.data);
+}
+
+function mapTeamtailorJobs(data) {
+  return (data?.jobs || []).map(j => {
+    const location = Array.isArray(j.regions) ? j.regions.join(', ') : (j.regions || '');
+    return {
+      title: j.title,
+      location,
+      url: j['apply-url'] || j.url || '',
+      job_type: j.role || '',
+      salary: '',
+      department: j.department || '',
+      description: snippet(stripHtml(j.body || '')),
+      posted_at: toMs(j['created-at'] || j.created_at),
+      closes_at: null,
+      remote: !!j.remote || isRemoteText(location),
+    };
+  });
+}
+
+async function fetchTeamtailor(slug) {
+  const url = `https://${encodeURIComponent(slug)}.teamtailor.com/jobs.json`;
+  const pageSize = 50;
+  const all = [];
+  for (let page = 1; all.length < MAX_ATS_PAGE_JOBS; page++) {
+    const resp = await axios.get(url, {
+      timeout: TIMEOUT, headers: { 'User-Agent': UA },
+      params: { 'page[number]': page, 'page[size]': pageSize },
+    });
+    const jobs = resp.data?.jobs || [];
+    all.push(...jobs);
+    if (jobs.length < pageSize) break;
+  }
+  return mapTeamtailorJobs({ jobs: all });
+}
+
+function mapBambooHrJobs(data, slug) {
+  return (data?.result || []).map(j => {
+    const loc = j.location || {};
+    const location = [loc.city, loc.state, loc.country].filter(Boolean).join(', ');
+    return {
+      title: j.jobOpeningName,
+      location,
+      url: `https://${slug}.bamboohr.com/careers/${j.id}`,
+      job_type: j.employmentStatusLabel || '',
+      salary: '',
+      department: j.departmentLabel || '',
+      description: '',
+      posted_at: null,
+      closes_at: null,
+      remote: !!loc.isRemote || isRemoteText(location),
+    };
+  });
+}
+
+async function fetchBambooHr(slug) {
+  const url = `https://${encodeURIComponent(slug)}.bamboohr.com/careers/list`;
+  const resp = await axios.get(url, { timeout: TIMEOUT, headers: { 'User-Agent': UA, Accept: 'application/json' } });
+  return mapBambooHrJobs(resp.data, slug);
+}
+
+function mapPersonioJobs(xml, slug) {
+  if (!xml) return [];
+  const $ = cheerio.load(xml, { xmlMode: true });
+  const jobs = [];
+  $('position').each((_, el) => {
+    const $el = $(el);
+    const id = $el.find('id').first().text().trim();
+    const title = $el.find('name').first().text().trim();
+    if (!title) return;
+    const office = $el.find('office').first().text().trim();
+    jobs.push({
+      title,
+      location: office,
+      url: id ? `https://${slug}.jobs.personio.de/job/${id}` : `https://${slug}.jobs.personio.de/`,
+      job_type: $el.find('employmenttype').first().text().trim() || '',
+      salary: '',
+      department: $el.find('department').first().text().trim() || '',
+      description: '',
+      posted_at: toMs($el.find('createdat').first().text().trim()),
+      closes_at: null,
+      remote: isRemoteText(office),
+    });
+  });
+  return jobs;
+}
+
+// Personio's public feed is XML, not JSON — https://{slug}.jobs.personio.{de,com}/xml
+// is the documented public job feed, no auth required.
+async function fetchPersonio(slug) {
+  const url = `https://${encodeURIComponent(slug)}.jobs.personio.de/xml`;
+  const resp = await axios.get(url, { timeout: TIMEOUT, headers: { 'User-Agent': UA } });
+  const xml = typeof resp.data === 'string' ? resp.data : '';
+  return mapPersonioJobs(xml, slug);
+}
+
+function mapWorkdayJobs(data, { base, site }) {
+  return (data?.jobPostings || []).map(j => ({
+    title: j.title,
+    location: j.locationsText || '',
+    url: j.externalPath ? `${base}/${site}${j.externalPath}` : base,
+    job_type: '',
+    salary: '',
+    department: '',
+    description: '',
+    // Workday's CXS response only gives a relative string ("Posted 3 Days
+    // Ago"), not a parseable date — leaving this null avoids a wrong
+    // freshness score rather than guessing at one.
+    posted_at: null,
+    closes_at: null,
+    remote: isRemoteText(j.locationsText),
+  }));
+}
+
+async function fetchWorkday(compositeSlug) {
+  const [tenant, wdNum, site] = String(compositeSlug || '').split('|');
+  if (!tenant || !wdNum || !site) return [];
+  const base = `https://${tenant}.wd${wdNum}.myworkdayjobs.com`;
+  const url = `${base}/wday/cxs/${tenant}/${site}/jobs`;
+  const pageSize = 20;
+  const all = [];
+  let total = Infinity;
+  for (let offset = 0; offset < Math.min(total, MAX_ATS_PAGE_JOBS); offset += pageSize) {
+    const resp = await axios.post(url, { appliedFacets: {}, limit: pageSize, offset, searchText: '' }, {
+      timeout: TIMEOUT,
+      headers: { 'User-Agent': UA, 'Content-Type': 'application/json' },
+    });
+    const page = resp.data?.jobPostings || [];
+    total = resp.data?.total ?? page.length;
+    all.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return mapWorkdayJobs({ jobPostings: all }, { base, site });
 }
 
 // --- generic careers-page scraping fallback -------------------------------
@@ -700,7 +1042,7 @@ function isSpecificJobUrl(jobUrl, baseUrl) {
 
     // External ATS / apply links are fine.
     if (job.hostname.replace(/^www\./, '') !== base.hostname.replace(/^www\./, '')) {
-      return /greenhouse|lever\.co|workable|ashby|breezy|smartrecruiters|myworkdayjobs|taleo|icims|jobvite/i.test(job.hostname);
+      return /greenhouse|lever\.co|workable|ashby|breezy|smartrecruiters|myworkdayjobs|taleo|icims|jobvite|recruitee|teamtailor|bamboohr|personio/i.test(job.hostname);
     }
 
     const basePath = base.pathname.replace(/\/+$/, '') || '/';
@@ -734,21 +1076,31 @@ function filterPlausibleJobs(jobs, baseUrl) {
 }
 
 async function fetchHtml(url) {
-  try {
-    const resp = await axios.get(url, {
-      timeout: TIMEOUT,
-      maxRedirects: 5,
-      validateStatus: () => true,
-      headers: {
-        'User-Agent': UA,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-    });
-    if (resp.status >= 400) return null;
-    return typeof resp.data === 'string' ? resp.data : '';
-  } catch {
-    return null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await axios.get(url, {
+        timeout: TIMEOUT,
+        maxRedirects: 5,
+        validateStatus: () => true,
+        headers: {
+          'User-Agent': UA,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+      // Only retry transient 5xx/network errors — a 4xx is a real answer.
+      if (resp.status >= 500 && attempt === 0) { await delay(300); continue; }
+      if (resp.status >= 400) return null;
+      return typeof resp.data === 'string' ? resp.data : '';
+    } catch {
+      if (attempt === 0) { await delay(300); continue; }
+      return null;
+    }
   }
+  return null;
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function absolutize(href, base) {
@@ -835,4 +1187,12 @@ module.exports = {
   filterPlausibleJobs,
   isFakeMarketingTitle,
   isSpecificJobUrl,
+  matchAts,
+  mapSmartRecruitersJobs,
+  mapRecruiteeJobs,
+  mapBreezyJobs,
+  mapTeamtailorJobs,
+  mapBambooHrJobs,
+  mapPersonioJobs,
+  mapWorkdayJobs,
 };

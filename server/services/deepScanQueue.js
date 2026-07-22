@@ -1,8 +1,9 @@
 // Background deep-scan queue — contact + jobs + LinkedIn after map scan.
-const { getCompany, updateEnrichment, syncJobsForCompany, upsertCompany } = require('../db');
+const { getCompany, updateEnrichment, updateScrapeStatus, syncJobsForCompany, upsertCompany } = require('../db');
 const { enrichCompany } = require('./enrichService');
 const { findJobsForCompany } = require('./jobsService');
 const { classify, inferOpportunities } = require('./classifyService');
+const { BOARD_JOB_SOURCES } = require('./trustService');
 const {
   resolveTeamLinkedIn,
   discoverCompanyPeople,
@@ -52,6 +53,7 @@ async function runDeepScan(companyId) {
       fetched: false,
       fetch_error: enriched.fetch_error || 'Could not reach website',
     });
+    await updateScrapeStatus(c.id, { status: 'failed' });
     return;
   }
 
@@ -90,14 +92,23 @@ async function runDeepScan(companyId) {
     try {
       const jobs = await findJobsForCompany(refreshed, { external: true });
       await syncJobsForCompany(c.id, jobs, { ok: true, replace: true });
+      const atsSource = jobs.find(j => j.source && j.source !== 'careers-page' && !BOARD_JOB_SOURCES.has(j.source));
+      await updateScrapeStatus(c.id, {
+        status: jobs.length ? 'ok' : 'partial',
+        ats: atsSource ? atsSource.source : null,
+      });
     } catch (jobErr) {
       console.warn('[deep-scan] jobs failed:', c.name, jobErr.message);
+      await updateScrapeStatus(c.id, { status: 'failed' });
     }
+  } else {
+    // Enriched fine, but there's nothing to scrape jobs from at all.
+    await updateScrapeStatus(c.id, { status: 'partial' });
   }
 }
 
 function queueStats() {
-  return { queued: queue.length, active, concurrency: CONCURRENCY };
+  return { queued: queue.length, active, concurrency: concurrency() };
 }
 
 module.exports = {

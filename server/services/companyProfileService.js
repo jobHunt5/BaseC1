@@ -11,8 +11,74 @@ const {
 } = require('./trustService');
 const { listJobsForCompany, getJobQualityForCompany, getLearnedWeights } = require('../db');
 const { scoreCompanyByLearning } = require('./matchLearningService');
+const { freshnessLabel } = require('./jobQualityService');
+const { seniorityRank } = require('./enrichService');
 
 const BOARD_SOURCES = new Set(['seek', 'indeed', 'linkedin-jobs', 'jora']);
+
+// This person's literal job is hiring — outranks any department match or
+// general seniority.
+const HIRING_TITLE_RE = /\b(hr|human resources|talent|recruit(ing|er|ment)?|people (ops|operations|partner)|hiring manager)\b/i;
+
+// Most common significant word across the company's own open jobs'
+// `department` field (populated per-ATS in jobsService.js, e.g.
+// "Engineering", "Sales" — free text, no enum) — used to bias toward a team
+// member whose title matches what the company is actually hiring for.
+function departmentSignal(jobRows) {
+  const counts = {};
+  for (const j of jobRows || []) {
+    const dept = String(j.department || '').toLowerCase();
+    for (const w of dept.split(/[\s/&,]+/)) {
+      if (w.length > 3) counts[w] = (counts[w] || 0) + 1;
+    }
+  }
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  return sorted[0]?.[0] || null;
+}
+
+function scoreContact(member, deptWord) {
+  const title = (member.title || '').toLowerCase();
+  let score = 0;
+  let reason = null;
+  if (HIRING_TITLE_RE.test(title)) {
+    score += 100;
+    reason = 'Handles hiring for this company';
+  } else if (deptWord && title.includes(deptWord)) {
+    score += 50;
+    reason = `Leads their ${capitalizeWord(deptWord)} team`;
+  }
+  // Fold in general seniority as a tiebreaker/fallback — lower rank number
+  // is more senior, so invert it into a small positive contribution.
+  score += Math.max(0, 20 - seniorityRank(member.title));
+  return { score, reason };
+}
+
+function capitalizeWord(w) {
+  return w ? w.charAt(0).toUpperCase() + w.slice(1) : w;
+}
+
+// Picks the best publicly-sourced hiring contact for this company: an
+// HR/Talent-titled person first, then someone whose title matches what the
+// company is actually hiring for, falling back to the most senior team
+// member found. Returns null when there's no team at all — never invents a
+// contact, and never reaches for LinkedIn scraping / third-party lookups
+// (team data here is 100% sourced from the company's own website).
+function pickHiringContact(team, jobRows) {
+  if (!team?.length) return null;
+  const deptWord = departmentSignal(jobRows);
+  const scored = team.map(m => ({ member: m, ...scoreContact(m, deptWord) }));
+  scored.sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  if (!best) return null;
+  return {
+    name: best.member.name,
+    title: best.member.title || '',
+    email: best.member.email || null,
+    linkedin_url: best.member.linkedin_url || null,
+    linkedin_verified: !!best.member.linkedin_verified,
+    reason: best.reason || 'Most senior contact found',
+  };
+}
 
 function enrichJobRow(job, qualityByJobId) {
   const confidence = job.confidence || jobConfidence(job.source);
@@ -29,6 +95,7 @@ function enrichJobRow(job, qualityByJobId) {
     quality_score: quality?.score ?? null,
     quality_flags: quality?.flags ?? [],
     looks_suspicious: quality != null && quality.score < 0.4,
+    freshness_label: freshnessLabel(job.posted_at),
   };
 }
 
@@ -95,6 +162,7 @@ async function buildCompanyProfile(company, jobs = null, userId = null, learnedW
     links,
     linkedin,
     team,
+    hiring_contact: pickHiringContact(team, jobRows),
     team_stats: {
       total: team.length,
       verified_linkedin: team.filter(m => m.linkedin_verified).length,
@@ -139,4 +207,6 @@ module.exports = {
   attachProfiles,
   enrichJobRow,
   enrichTeamMember,
+  pickHiringContact,
+  departmentSignal,
 };

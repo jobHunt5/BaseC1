@@ -13,7 +13,10 @@ const BLOCKED_EMAIL_RE = [
   /popperjs|tippy@|lottie@|\.min\.js@/i,
 ];
 
-const HIGH_CONFIDENCE_JOB_SOURCES = new Set(['greenhouse', 'lever', 'workable', 'ashby', 'json-ld', 'jobadder']);
+const HIGH_CONFIDENCE_JOB_SOURCES = new Set([
+  'greenhouse', 'lever', 'workable', 'ashby', 'json-ld', 'jobadder',
+  'smartrecruiters', 'recruitee', 'breezy', 'teamtailor', 'bamboohr', 'personio', 'workday',
+]);
 const BOARD_JOB_SOURCES = new Set(['seek', 'indeed', 'linkedin-jobs', 'jora']);
 const VERIFIED_LINKEDIN_MEMBER_SOURCES = new Set(['website', 'linkedin_company', 'serper']);
 

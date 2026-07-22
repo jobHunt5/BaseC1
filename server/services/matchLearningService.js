@@ -17,7 +17,7 @@ const {
   setLearnedWeight,
 } = require('../db');
 
-const POSITIVE_ACTIONS = new Set(['saved', 'applied']);
+const POSITIVE_ACTIONS = new Set(['saved', 'applied', 'interviewing', 'offer']);
 const NEGATIVE_ACTIONS = new Set(['unsaved', 'unapplied', 'skipped']);
 
 // A feature only influences scoring once it has enough samples behind it —
