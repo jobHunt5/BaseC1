@@ -70,6 +70,46 @@ test('company status/notes/rating updates persist and list correctly', async () 
   });
 });
 
+test('application-tracking stages (interviewing/offer/rejected) can be set and show up in the applied pipeline', async () => {
+  const email = `companies_suite_stages_${Date.now()}@example.com`;
+  const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: 'testpass123', name: 'Stages Suite' }),
+  });
+  const cookie = cookieFrom(loginRes);
+  assert.ok(cookie);
+
+  for (const stage of ['interviewing', 'offer', 'rejected']) {
+    const patchRes = await fetch(`${baseUrl}/api/companies/${encodeURIComponent(TEST_COMPANY_ID)}`, {
+      method: 'PATCH',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: stage }),
+    });
+    assert.equal(patchRes.status, 200, `PATCHing status to '${stage}' should be accepted`);
+    const patched = await patchRes.json();
+    assert.equal(patched.status, stage);
+
+    const listRes = await fetch(`${baseUrl}/api/companies/pipeline?kind=applied`, { headers: { Cookie: cookie } });
+    assert.equal(listRes.status, 200);
+    const list = await listRes.json();
+    assert.ok(list.companies.some(c => c.id === TEST_COMPANY_ID), `'${stage}' should count as part of the applied pipeline`);
+  }
+
+  const badRes = await fetch(`${baseUrl}/api/companies/${encodeURIComponent(TEST_COMPANY_ID)}`, {
+    method: 'PATCH',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'not-a-real-stage' }),
+  });
+  assert.equal(badRes.status, 400);
+
+  await fetch(`${baseUrl}/api/auth/me`, {
+    method: 'DELETE',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'testpass123' }),
+  });
+});
+
 test('job applied toggle', async () => {
   const email = `companies_suite_job_${Date.now()}@example.com`;
   const loginRes = await fetch(`${baseUrl}/api/auth/login`, {

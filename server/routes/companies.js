@@ -141,6 +141,17 @@ router.get('/deep-scan/status', (req, res) => {
 function interactionForTransition(fromStatus, toStatus) {
   if (toStatus === 'interested') return 'saved';
   if (toStatus === 'applied') return 'applied';
+  // Progressing to an interview or offer is itself a strong positive
+  // signal (real employer interest, not just the user's own guess) — worth
+  // its own action name in matchLearningService's POSITIVE_ACTIONS rather
+  // than lumping it in with the original 'applied' signal.
+  if (toStatus === 'interviewing') return 'interviewing';
+  if (toStatus === 'offer') return 'offer';
+  // Deliberately NOT positive or negative for match-learning purposes — a
+  // rejection is an external hiring decision, not evidence the user
+  // dislikes this kind of company (they applied and interviewed, showing
+  // real interest). Still recorded here for the application-history trail.
+  if (toStatus === 'rejected') return 'rejected';
   if (toStatus === 'skipped') return 'skipped';
   if (toStatus === 'none') {
     if (fromStatus === 'interested') return 'unsaved';
@@ -156,7 +167,7 @@ router.patch('/companies/:id', async (req, res) => {
   const { status, notes, user_rating } = req.body || {};
 
   if (status !== undefined) {
-    const allowed = ['none', 'interested', 'applied', 'skipped'];
+    const allowed = ['none', 'interested', 'applied', 'interviewing', 'offer', 'rejected', 'skipped'];
     if (!allowed.includes(status)) {
       return res.status(400).json({ error: `status must be one of ${allowed.join(', ')}` });
     }
