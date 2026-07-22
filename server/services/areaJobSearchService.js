@@ -12,9 +12,9 @@
 const axios = require('axios');
 const { serperSearch, isConfigured: serperConfigured } = require('./serperClient');
 const { detectVisaFlag } = require('./visaDetectionService');
+const { getCached, setCached } = require('./apiCacheService');
 
 const CACHE_TTL_MS = 1000 * 60 * 30;
-const cache = new Map();
 
 const AREA_JOB_BOARDS = [
   { source: 'seek', site: 'site:seek.com.au/job', urlRe: /seek\.com\.au\/job\//i },
@@ -151,10 +151,10 @@ async function findAreaJobs(bounds, { terms = '', limit = 100 } = {}) {
   if (!suburb && !state) return { enabled: true, suburb: '', jobs: [] };
 
   const termKey = Array.isArray(terms) ? terms.slice().sort().join(',') : terms;
-  const cacheKey = `${suburb}|${state}|${termKey}`.toLowerCase();
-  const cached = cache.get(cacheKey);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
-    return { enabled: true, suburb, jobs: cached.jobs.slice(0, limit) };
+  const cacheKey = `areajobs:${suburb}|${state}|${termKey}`.toLowerCase();
+  const cached = await getCached(cacheKey);
+  if (cached) {
+    return { enabled: true, suburb, jobs: cached.slice(0, limit) };
   }
 
   const batches = await Promise.all(
@@ -172,7 +172,7 @@ async function findAreaJobs(bounds, { terms = '', limit = 100 } = {}) {
     }
   }
 
-  cache.set(cacheKey, { jobs: merged, at: Date.now() });
+  await setCached(cacheKey, merged, CACHE_TTL_MS);
   return { enabled: true, suburb, state, jobs: merged.slice(0, limit) };
 }
 

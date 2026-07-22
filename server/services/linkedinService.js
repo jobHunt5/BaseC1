@@ -12,6 +12,7 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { serperSearch, isConfigured: serperConfigured } = require('./serperClient');
+const { getCached, setCached } = require('./apiCacheService');
 
 const TIMEOUT = parseInt(process.env.LINKEDIN_TIMEOUT_MS || '10000', 10);
 const UA = process.env.ENRICH_USER_AGENT ||
@@ -19,20 +20,17 @@ const UA = process.env.ENRICH_USER_AGENT ||
 
 const TRUSTED_SOURCES = new Set(['website', 'linkedin_company', 'serper']);
 
-const cache = new Map();
-const peopleCache = new Map();
-const CACHE_MAX = 800;
 const CACHE_TTL_MS = 1000 * 60 * 60 * 24;
 
-function cacheGet(key) {
-  const v = cache.get(key);
-  if (!v) return undefined;
-  if (Date.now() - v.at > CACHE_TTL_MS) { cache.delete(key); return undefined; }
-  return v.url;
+// Persisted (Postgres-backed) so this survives a Render restart — see
+// apiCacheService.js. `undefined` means "haven't looked yet"; a cached
+// `null` means "looked, found nothing" — findVerifiedLinkedIn relies on
+// telling those two apart to avoid re-querying Serper for a known miss.
+async function cacheGet(key) {
+  return getCached(`linkedin_person:${key}`);
 }
-function cacheSet(key, url) {
-  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
-  cache.set(key, { url, at: Date.now() });
+async function cacheSet(key, url) {
+  return setCached(`linkedin_person:${key}`, url, CACHE_TTL_MS);
 }
 
 function sleep(ms) {
@@ -293,9 +291,9 @@ async function discoverCompanyPeople(company, { limit = 12 } = {}) {
   if (!name) return [];
 
   const linkedinCo = company.socials?.linkedin || '';
-  const cacheKey = `${name}|${extractCityFromAddress(company.address)}|${linkedinCo}`.toLowerCase();
-  const cached = peopleCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.people;
+  const cacheKey = `linkedin_people:${name}|${extractCityFromAddress(company.address)}|${linkedinCo}`.toLowerCase();
+  const cached = await getCached(cacheKey);
+  if (cached) return cached;
 
   const people = [];
 
@@ -328,7 +326,7 @@ async function discoverCompanyPeople(company, { limit = 12 } = {}) {
   }
 
   const out = people.slice(0, limit);
-  peopleCache.set(cacheKey, { people: out, at: Date.now() });
+  await setCached(cacheKey, out, CACHE_TTL_MS);
   return out;
 }
 
@@ -338,7 +336,7 @@ async function findVerifiedLinkedIn(name, companyName, { address } = {}) {
   const location = formatAustralianLocation(address);
   const city = extractCityFromAddress(address);
   const cacheKey = `${name.toLowerCase()}|${(companyName || '').toLowerCase()}|${location.toLowerCase()}`;
-  const cached = cacheGet(cacheKey);
+  const cached = await cacheGet(cacheKey);
   if (cached !== undefined) return cached;
 
   const queries = [
@@ -355,14 +353,14 @@ async function findVerifiedLinkedIn(name, companyName, { address } = {}) {
       if (!resultMentionsCompany(r.title, r.snippet, companyName)) continue;
       const extracted = extractProfileUrl(r.link);
       if (extracted) {
-        cacheSet(cacheKey, extracted.url);
+        await cacheSet(cacheKey, extracted.url);
         return extracted.url;
       }
     }
     await sleep(150);
   }
 
-  cacheSet(cacheKey, null);
+  await cacheSet(cacheKey, null);
   return null;
 }
 

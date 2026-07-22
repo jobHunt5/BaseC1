@@ -13,7 +13,9 @@
 const express = require('express');
 
 const { findPlacesInBounds } = require('../services/placesService');
-const { upsertCompany, listJobsForCompany, listCompaniesInBounds, jobsGroupedFor, recordScan } = require('../db');
+const {
+  upsertCompany, listJobsForCompany, listCompaniesInBounds, jobsGroupedFor, recordScan, getRecentCoveringScan,
+} = require('../db');
 const { getUserFromRequest } = require('./auth');
 const { enqueueMany } = require('../services/deepScanQueue');
 const { findAreaJobs, isAreaJobSearchEnabled } = require('../services/areaJobSearchService');
@@ -28,6 +30,13 @@ const router = express.Router();
 // directly. Neither had a cap before, unlike the PDF/send/AI endpoints below.
 const scanRateLimit = rateLimit({ max: 20, windowMs: 60 * 60 * 1000, keyFn: byUser });
 const areaJobsRateLimit = rateLimit({ max: 30, windowMs: 60 * 60 * 1000, keyFn: byUser });
+
+// Real-world business listings don't change hour to hour — if a Google scan
+// already fully covered this area recently, skip the ~480-call worst-case
+// Places sweep entirely and serve what's already stored. Marked 'cache' (not
+// 'google') in `scans` so a cache hit can never itself extend the freshness
+// window for the next lookup.
+const PLACES_CACHE_MS = parseInt(process.env.PLACES_SCAN_CACHE_HOURS || '24', 10) * 60 * 60 * 1000;
 
 router.use(async (req, res, next) => {
   const user = await getUserFromRequest(req);
@@ -47,6 +56,24 @@ router.post('/', scanRateLimit, async (req, res) => {
   }
 
   const bounds = { south, west, north, east };
+
+  const covering = await getRecentCoveringScan(bounds, Date.now() - PLACES_CACHE_MS);
+  if (covering) {
+    const cached = await listCompaniesInBounds(bounds, req.user.id);
+    await recordScan({ ...bounds, provider: 'cache', resultCount: cached.length }, req.user.id);
+    const jobsMap = await jobsGroupedFor(cached.map(c => c.id), req.user.id);
+    const out = await attachProfiles(cached, jobsMap, req.user.id);
+    return res.json({
+      provider: 'cache',
+      fellBack: false,
+      fallbackReason: null,
+      bounds,
+      count: out.length,
+      enriched: 0,
+      companies: out,
+      areaJobsEnabled: isAreaJobSearchEnabled(),
+    });
+  }
 
   let places, provider, fellBack, fallbackReason;
   try {

@@ -6,9 +6,9 @@
 
 const { formatAustralianLocation, extractCityFromAddress } = require('./linkedinService');
 const { serperSearch, isConfigured: serperConfigured } = require('./serperClient');
+const { getCached, setCached } = require('./apiCacheService');
 
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
-const cache = new Map();
 
 const JOB_BOARDS = [
   { source: 'seek', site: 'site:seek.com.au', urlRe: /seek\.com\.au\/job\//i },
@@ -129,9 +129,9 @@ async function findExternalBoardJobs(company, { limit = 15 } = {}) {
 
   const terms = companySearchTerms(company.name);
   const location = formatAustralianLocation(company.address);
-  const cacheKey = `${terms.full}|${location}`.toLowerCase();
-  const cached = cache.get(cacheKey);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.jobs.slice(0, limit);
+  const cacheKey = `boardjobs:${terms.full}|${location}`.toLowerCase();
+  const cached = await getCached(cacheKey);
+  if (cached) return cached.slice(0, limit);
 
   const boardResults = await Promise.all(
     JOB_BOARDS.map(board => searchBoard(board, company, terms, location)),
@@ -149,7 +149,7 @@ async function findExternalBoardJobs(company, { limit = 15 } = {}) {
   }
 
   const out = merged.slice(0, limit);
-  cache.set(cacheKey, { jobs: out, at: Date.now() });
+  await setCached(cacheKey, out, CACHE_TTL_MS);
   return out;
 }
 
