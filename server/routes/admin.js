@@ -19,6 +19,7 @@ const {
 } = require('../db');
 const { getLearningStats } = require('../services/matchLearningService');
 const { getSettingsWithMeta, updateSetting } = require('../services/settingsService');
+const { buildTrainingExport } = require('../services/trainingExportService');
 const { getAdminFromRequest } = require('./adminAuth');
 const {
   status: getSerperStatus, getUsageToday: getSerperUsage, budgetLimit: getSerperBudget,
@@ -77,6 +78,15 @@ router.put('/settings', async (req, res) => {
 
 router.get('/audit-log', async (req, res) => {
   res.json({ actions: await getAdminActions(200) });
+});
+
+// Anonymized, opt-in-only preference-weight export for model training — see
+// trainingExportService.js for exactly what is (and, more importantly,
+// isn't) included. Computed live on every call, nothing stored.
+router.get('/training-export', async (req, res) => {
+  const data = await buildTrainingExport();
+  res.set('Content-Disposition', `attachment; filename="training-export-${new Date().toISOString().slice(0, 10)}.json"`);
+  res.json(data);
 });
 
 router.get('/users', async (req, res) => {

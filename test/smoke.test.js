@@ -88,6 +88,25 @@ test('signup, login, me, and account deletion', async () => {
   assert.equal(meRes.status, 200);
   const me = await meRes.json();
   assert.equal(me.email, email);
+  assert.equal(me.alertsEnabled, true, 'alerts should default on');
+  assert.equal(me.trainingDataConsent, false, 'training-data consent should default off (opt-in only)');
+
+  // Alerts + training-consent toggles both round-trip through /me.
+  const alertsPatchRes = await fetch(`${baseUrl}/api/auth/alerts`, {
+    method: 'PATCH',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: false }),
+  });
+  assert.equal(alertsPatchRes.status, 200);
+  const consentPatchRes = await fetch(`${baseUrl}/api/auth/training-consent`, {
+    method: 'PATCH',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: true }),
+  });
+  assert.equal(consentPatchRes.status, 200);
+  const meAfterToggles = await (await fetch(`${baseUrl}/api/auth/me`, { headers: { Cookie: cookie } })).json();
+  assert.equal(meAfterToggles.alertsEnabled, false);
+  assert.equal(meAfterToggles.trainingDataConsent, true);
 
   // Deleting with the wrong password must fail and leave the account intact.
   const badDeleteRes = await fetch(`${baseUrl}/api/auth/me`, {
