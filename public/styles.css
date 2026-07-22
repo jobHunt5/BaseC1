@@ -542,6 +542,7 @@ body.view-pipeline .detail-panel {
   body.view-scan .detail-backdrop { right: 0; }
   body.view-scan .detail-panel { right: 0; width: 100%; }
   .detail-panel { width: 100% !important; }
+  .detail-tabs .tab { padding: 8px 4px; font-size: 11px; }
 }
 .detail-panel { border-left: 1px solid var(--border); }
 .detail-header {
@@ -558,6 +559,16 @@ body.view-pipeline .detail-panel {
   display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.15s;
 }
 .detail-close:hover { color: var(--text); border-color: var(--accent); }
+.detail-tabs {
+  position: sticky; top: 0; z-index: 1; background: var(--surface);
+  padding-left: 8px; padding-right: 8px;
+}
+.detail-tabs .tab {
+  flex: 1; text-align: center; background: none; font-family: inherit; cursor: pointer;
+  border-top: none; border-left: none; border-right: none;
+}
+.detail-tabs.hidden { display: none; }
+.detail-tab-panel.hidden { display: none; }
 .detail-body { padding: 20px; flex: 1; }
 .detail-section { margin-bottom: 20px; }
 .detail-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.7px; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
@@ -640,7 +651,12 @@ body.view-pipeline .detail-panel {
 .job-row.applied .job-title { text-decoration: line-through; color: var(--muted); }
 .job-meta { font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
 .job-meta span { display: flex; align-items: center; gap: 3px; }
-.job-source { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent2); }
+.job-meta-secondary { font-size: 10px; color: var(--muted); opacity: 0.75; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 3px; }
+.job-meta-secondary span { display: flex; align-items: center; gap: 3px; }
+.job-flags { margin-top: 6px; }
+.job-flags summary { cursor: pointer; list-style: none; user-select: none; display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--red); }
+.job-flags summary::-webkit-details-marker { display: none; }
+.job-flags .job-suspicious-warning { margin-top: 6px; }
 .job-desc {
   font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.45;
   display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;

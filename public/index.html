@@ -590,6 +590,12 @@
       <div style="font-size:12px;color:var(--muted)" id="detailType"></div>
     </div>
   </div>
+  <div class="detail-tabs tabs" id="detailTabs">
+    <button class="tab active" data-tab="overview" onclick="App.switchDetailTab('overview')">Overview</button>
+    <button class="tab" data-tab="jobs" onclick="App.switchDetailTab('jobs')">Jobs</button>
+    <button class="tab" data-tab="outreach" onclick="App.switchDetailTab('outreach')">Outreach</button>
+    <button class="tab" data-tab="tracking" onclick="App.switchDetailTab('tracking')">Tracking</button>
+  </div>
   <div class="detail-body" id="detailBody"></div>
 </div>
 

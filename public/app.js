@@ -2065,13 +2065,11 @@ const App = (() => {
   // ---- richer job & explore rendering -------------------------------------
 
   function renderJobRow(j) {
+    // Primary: "can I do this job / is it still open" facts — always visible.
     const meta = [];
-    if (j.job_type)     meta.push(`<span>${ic('briefcase', 12)}${escapeHtml(j.job_type)}</span>`);
     if (j.location)     meta.push(`<span>${ic('pin', 12)}${escapeHtml(j.location)}</span>`);
     if (j.remote)       meta.push(`<span style="color:var(--accent2)">${ic('globe', 12)}Remote</span>`);
-    if (j.department)   meta.push(`<span>${ic('price-tag', 12)}${escapeHtml(j.department)}</span>`);
     if (j.salary)       meta.push(`<span>${ic('dollar', 12)}${escapeHtml(j.salary)}</span>`);
-    if (j.posted_at)    meta.push(`<span title="Posted ${new Date(j.posted_at).toLocaleDateString()}">${ic('calendar', 12)}Posted ${timeAgo(j.posted_at)}</span>`);
     if (j.closes_at) {
       const days = Math.ceil((j.closes_at - Date.now()) / 86400000);
       const cls = days < 0 ? 'closed' : days <= 7 ? 'urgent' : '';
@@ -2083,12 +2081,16 @@ const App = (() => {
     }
     if (j.visa_flag === 'sponsorship-available') {
       meta.push(`<span style="color:var(--green)">${ic('check', 12)}Sponsorship mentioned</span>`);
-    } else if (j.visa_flag === 'citizens-only') {
-      meta.push(`<span style="color:var(--red)">${ic('warning', 12)}Citizens/PR only</span>`);
-    } else if (j.visa_flag === 'clearance-required') {
-      meta.push(`<span style="color:var(--red)">${ic('warning', 12)}Security clearance required</span>`);
     }
-    if (j.source)       meta.push(`<span class="job-source">${escapeHtml(j.source)}</span>`);
+
+    // Secondary: context, not decision-critical — smaller/muted line. The
+    // confidence badge already names the source for board listings (e.g.
+    // "Job board · Seek"), so a separate raw job-source chip would just
+    // repeat the same fact.
+    const secondary = [];
+    if (j.job_type)     secondary.push(`<span>${ic('briefcase', 12)}${escapeHtml(j.job_type)}</span>`);
+    if (j.department)   secondary.push(`<span>${ic('price-tag', 12)}${escapeHtml(j.department)}</span>`);
+    if (j.posted_at)    secondary.push(`<span title="Posted ${new Date(j.posted_at).toLocaleDateString()}">${ic('calendar', 12)}Posted ${timeAgo(j.posted_at)}</span>`);
     const trust = jobTrustLabel(j.source, j);
 
     const desc = j.description
@@ -2099,20 +2101,24 @@ const App = (() => {
       ? `<a href="${escapeAttr(j.url)}" target="_blank" rel="noopener">${escapeHtml(j.title)}</a>`
       : escapeHtml(j.title);
 
-    const suspiciousWarning = j.looks_suspicious
-      ? `<div class="job-suspicious-warning">${ic('warning', 13)}This posting has red flags — ${(j.quality_flags || []).map(escapeHtml).join('; ') || 'looks unusual'}. Verify carefully before applying or sharing any details.</div>`
-      : '';
-
+    // Flags: anything worth reading before applying, collapsed behind one
+    // summary instead of stacking full-width warning blocks per issue.
+    const flags = [];
+    if (j.looks_suspicious) {
+      flags.push(`This posting has red flags — ${(j.quality_flags || []).map(escapeHtml).join('; ') || 'looks unusual'}. Verify carefully before applying or sharing any details.`);
+    }
     // Only warn when it's actually relevant to THIS user — someone who's a
     // citizen/PR (or didn't set this in their profile yet) gets no warning
     // even on a citizens-only posting, since it doesn't affect them.
     const needsVisa = ['visa-full', 'visa-limited', 'visa-sponsorship', 'working-holiday'].includes(profile.workRights);
-    const visaWarning = needsVisa && (j.visa_flag === 'citizens-only' || j.visa_flag === 'clearance-required')
-      ? `<div class="job-suspicious-warning">${ic('warning', 13)}${j.visa_flag === 'clearance-required' ? 'Requires a security clearance, which effectively means citizens/PR only' : 'Requires Australian citizenship or permanent residency'} — based on your profile, you may not be eligible for this role.</div>`
-      : '';
-
-    const repostWarning = j.hidden_market_label === 'possibly-filled'
-      ? `<div class="job-suspicious-warning">${ic('warning', 13)}${j.hidden_market_reason || `Reposted ${j.repost_count} times`} — this role may already be informally filled.</div>`
+    if (needsVisa && (j.visa_flag === 'citizens-only' || j.visa_flag === 'clearance-required')) {
+      flags.push(`${j.visa_flag === 'clearance-required' ? 'Requires a security clearance, which effectively means citizens/PR only' : 'Requires Australian citizenship or permanent residency'} — based on your profile, you may not be eligible for this role.`);
+    }
+    if (j.hidden_market_label === 'possibly-filled') {
+      flags.push(`${j.hidden_market_reason || `Reposted ${j.repost_count} times`} — this role may already be informally filled.`);
+    }
+    const flagsBlock = flags.length
+      ? `<details class="job-flags"><summary>${ic('warning', 12)}${flags.length} flag${flags.length > 1 ? 's' : ''} — check before applying</summary>${flags.map(f => `<div class="job-suspicious-warning">${ic('warning', 13)}${f}</div>`).join('')}</details>`
       : '';
 
     return `
@@ -2120,10 +2126,9 @@ const App = (() => {
         <input type="checkbox" class="job-checkbox" ${j.applied ? 'checked' : ''} onchange="App.toggleJobApplied(${j.id}, this.checked)" />
         <div class="job-body">
           <div class="job-title">${titleHtml}</div>
-          <div class="job-meta">${meta.join('')}${trust}</div>
-          ${suspiciousWarning}
-          ${visaWarning}
-          ${repostWarning}
+          <div class="job-meta">${meta.join('')}</div>
+          ${secondary.length || trust ? `<div class="job-meta-secondary">${secondary.join('')}${trust}</div>` : ''}
+          ${flagsBlock}
           ${desc}
           ${j.url ? `<a class="job-apply-link" href="${escapeAttr(j.url)}" target="_blank" rel="noopener">Open posting ${ic('chevron-right', 12, false)}</a>` : ''}
         </div>
@@ -2679,6 +2684,7 @@ const App = (() => {
                           (c.socials && Object.keys(c.socials).length) ||
                           (c.jobs && c.jobs.length));
     if (!isEnriched && !hasAnyData && c.website) {
+      document.getElementById('detailTabs').classList.add('hidden');
       document.getElementById('detailBody').innerHTML = renderDeepScanSkeleton(c);
       document.getElementById('detailPanel').classList.add('open');
       document.getElementById('detailBackdrop').classList.add('show');
@@ -2745,44 +2751,55 @@ const App = (() => {
 
     const stars = [1, 2, 3, 4, 5].map(i => `<span class="star ${c.user_rating >= i ? 'lit' : ''}" onclick="App.setRating('${c.id}', ${i})">${ic('star', 15, false)}</span>`).join('');
 
+    const detailTabs = document.getElementById('detailTabs');
+    detailTabs.classList.remove('hidden');
+    detailTabs.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'overview'));
     document.getElementById('detailBody').innerHTML = `
-      ${trustBanner}
-      ${renderMatchBanner(c)}
-      ${state.hasOpenAiKey ? renderAiFitSection(c) : ''}
-      ${descSection}
-      <div class="detail-section">
-        <div class="detail-label">
-          <span>Contact</span>
-          ${c.website ? `<button class="mini-btn" onclick="App.reVerifyCompany('${escapeAttr(c.id)}')">${ic('refresh', 12)}Re-scan website</button>` : ''}
+      <div class="detail-tab-panel" data-tab-panel="overview">
+        ${trustBanner}
+        ${renderMatchBanner(c)}
+        ${state.hasOpenAiKey ? renderAiFitSection(c) : ''}
+        ${descSection}
+        <div class="detail-section">
+          <div class="detail-label">
+            <span>Contact</span>
+            ${c.website ? `<button class="mini-btn" onclick="App.reVerifyCompany('${escapeAttr(c.id)}')">${ic('refresh', 12)}Re-scan website</button>` : ''}
+          </div>
+          ${emailRow}
+          ${phoneRow}
+          ${addressBit}
         </div>
-        ${emailRow}
-        ${phoneRow}
-        ${addressBit}
-      </div>
-      ${companyLinksSection}
-      ${teamSection}
-      ${jobsSection}
-      ${socialRow}
-      ${otherEmailsRow}
-      <div class="detail-section">
-        <div class="detail-label">Outreach email</div>
-        ${renderOutreach(c)}
-      </div>
-      <div class="detail-section">
-        <div class="detail-label">Explore</div>
-        ${renderExplore(c)}
-      </div>
-      <div class="detail-section">
-        <div class="detail-label">Your tracking</div>
-        <div class="stage-control">
-          ${['interested', 'applied', 'interviewing', 'offer', 'rejected'].map(stage => `
-            <button class="stage-btn stage-${stage} ${c.status === stage ? 'active' : ''}" onclick="App.toggleStatus('${c.id}', '${stage}')">
-              ${STAGE_LABELS[stage]}
-            </button>
-          `).join('')}
+        ${companyLinksSection}
+        ${teamSection}
+        ${socialRow}
+        ${otherEmailsRow}
+        <div class="detail-section">
+          <div class="detail-label">Explore</div>
+          ${renderExplore(c)}
         </div>
-        <div class="rating-row">${stars}</div>
-        <textarea class="notes-area" placeholder="Add notes about this company…" oninput="App.saveNotes('${c.id}', this.value)">${escapeHtml(c.notes || '')}</textarea>
+      </div>
+      <div class="detail-tab-panel hidden" data-tab-panel="jobs">
+        ${jobsSection}
+      </div>
+      <div class="detail-tab-panel hidden" data-tab-panel="outreach">
+        <div class="detail-section">
+          <div class="detail-label">Outreach email</div>
+          ${renderOutreach(c)}
+        </div>
+      </div>
+      <div class="detail-tab-panel hidden" data-tab-panel="tracking">
+        <div class="detail-section">
+          <div class="detail-label">Your tracking</div>
+          <div class="stage-control">
+            ${['interested', 'applied', 'interviewing', 'offer', 'rejected'].map(stage => `
+              <button class="stage-btn stage-${stage} ${c.status === stage ? 'active' : ''}" onclick="App.toggleStatus('${c.id}', '${stage}')">
+                ${STAGE_LABELS[stage]}
+              </button>
+            `).join('')}
+          </div>
+          <div class="rating-row">${stars}</div>
+          <textarea class="notes-area" placeholder="Add notes about this company…" oninput="App.saveNotes('${c.id}', this.value)">${escapeHtml(c.notes || '')}</textarea>
+        </div>
       </div>
     `;
     document.getElementById('detailPanel').classList.add('open');
@@ -2807,6 +2824,7 @@ const App = (() => {
     const c = state.companies.find(x => String(x.id) === String(id));
     if (!c || !c.website) return;
     c.enrich_error = null;
+    document.getElementById('detailTabs').classList.add('hidden');
     document.getElementById('detailBody').innerHTML = renderDeepScanSkeleton(c);
     await lazyEnrich(id, { force: true, depth: 'full' });
   }
@@ -2924,6 +2942,11 @@ const App = (() => {
     const pct = Math.round((p.done / p.total) * 100);
     el.style.display = '';
     el.innerHTML = `<span class="ep-text">Contact scan <strong>${p.done}/${p.total}</strong></span><span class="ep-fill" style="width:${pct}%"></span>`;
+  }
+
+  function switchDetailTab(tab) {
+    document.getElementById('detailTabs').querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.querySelectorAll('.detail-tab-panel').forEach(p => p.classList.toggle('hidden', p.dataset.tabPanel !== tab));
   }
 
   function closeDetail() {
@@ -3403,7 +3426,7 @@ const App = (() => {
     filterCat,
     openScanPage, openPipelinePage, switchPipelineTab,
     markAreaDone, saveArea,
-    openDetail, closeDetail,
+    openDetail, closeDetail, switchDetailTab,
     toggleStatus, toggleJobApplied, setRating, saveNotes, refreshJobs,
     copy, copyOutreach,
     verifyCompanyEmail, generateOutreachEmails, applyOutreachVariant, sendOutreachEmail,
