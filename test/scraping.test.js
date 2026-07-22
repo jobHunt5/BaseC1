@@ -21,8 +21,8 @@ const {
   matchAts,
 } = require('../server/services/jobsService');
 const { sameRegistrableDomain, extractTeam } = require('../server/services/enrichService');
-const { scoreJobQuality, freshnessLabel } = require('../server/services/jobQualityService');
-const { pickHiringContact, departmentSignal } = require('../server/services/companyProfileService');
+const { scoreJobQuality, freshnessLabel, normalizeTitle, hiddenMarketLabel } = require('../server/services/jobQualityService');
+const { pickHiringContact, departmentSignal, enrichJobRow } = require('../server/services/companyProfileService');
 const db = require('../server/db.js');
 
 // --- ATS response mappers --------------------------------------------------
@@ -206,6 +206,57 @@ test('freshnessLabel buckets by age', () => {
   assert.equal(freshnessLabel(Date.now() - 2 * day), 'new');
   assert.equal(freshnessLabel(Date.now() - 20 * day), 'recent');
   assert.equal(freshnessLabel(Date.now() - 200 * day), 'older');
+});
+
+// --- hidden-market / ghost-job detection -------------------------------------
+
+test('normalizeTitle collapses seniority/parenthetical noise so reposts still match', () => {
+  assert.equal(normalizeTitle('Senior Software Engineer'), normalizeTitle('Software Engineer'));
+  assert.equal(normalizeTitle('Nurse (Casual)'), 'nurse');
+  assert.equal(normalizeTitle(null), '');
+  assert.equal(normalizeTitle(''), '');
+});
+
+test('hiddenMarketLabel flags heavily-reposted jobs as possibly filled', () => {
+  const result = hiddenMarketLabel({ repost_count: 3 });
+  assert.equal(result.label, 'possibly-filled');
+  assert.equal(result.repostCount, 3);
+  assert.ok(result.reason.includes('3 times'));
+});
+
+test('hiddenMarketLabel leaves a 1-2 repost job unlabeled (soft zone, not yet a warning)', () => {
+  assert.equal(hiddenMarketLabel({ repost_count: 1 }).label, null);
+  assert.equal(hiddenMarketLabel({ repost_count: 2 }).label, null);
+});
+
+test('hiddenMarketLabel flags a fresh, never-reposted job as likely open', () => {
+  const day = 24 * 60 * 60 * 1000;
+  const result = hiddenMarketLabel({ repost_count: 0, first_seen_at: Date.now() - 2 * day, removed_at: null });
+  assert.equal(result.label, 'likely-open');
+});
+
+test('hiddenMarketLabel does not call an old, never-reposted job likely-open', () => {
+  const day = 24 * 60 * 60 * 1000;
+  const result = hiddenMarketLabel({ repost_count: 0, first_seen_at: Date.now() - 40 * day, removed_at: null });
+  assert.equal(result.label, null);
+});
+
+test('hiddenMarketLabel returns no label with no history at all', () => {
+  assert.equal(hiddenMarketLabel({}).label, null);
+});
+
+test('enrichJobRow surfaces hidden_market_label for a heavily-reposted job', () => {
+  const enriched = enrichJobRow({ id: 1, source: 'careers-page', title: 'Engineer', repost_count: 4 }, new Map());
+  assert.equal(enriched.hidden_market_label, 'possibly-filled');
+  assert.equal(enriched.repost_count, 4);
+});
+
+test('enrichJobRow surfaces hidden_market_label + freshness_label for a freshly-seen job', () => {
+  const day = 24 * 60 * 60 * 1000;
+  const job = { id: 2, source: 'careers-page', title: 'Engineer', posted_at: Date.now() - 2 * day, first_seen_at: Date.now() - 2 * day, repost_count: 0, removed_at: null };
+  const enriched = enrichJobRow(job, new Map());
+  assert.equal(enriched.hidden_market_label, 'likely-open');
+  assert.equal(enriched.freshness_label, 'new');
 });
 
 // --- retry on transient failure ---------------------------------------------

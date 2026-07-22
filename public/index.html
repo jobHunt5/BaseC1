@@ -419,6 +419,14 @@
         <span>Email me about new matching jobs</span>
       </label>
 
+      <div class="profile-section-title">Appearance</div>
+      <p class="form-hint">A white/black Apple-style look, alongside the regular dark theme.</p>
+      <label class="form-label toggle-row">
+        <input type="checkbox" id="profAppleTheme" onchange="App.toggleTheme(this.checked)" />
+        <div class="toggle-box"><svg width="12" height="12"><use href="#icon-check"></use></svg></div>
+        <span>Apple design mode</span>
+      </label>
+
       <div class="profile-section-title">Help improve AreaHunt</div>
       <p class="form-hint">Off by default. If you turn this on, an anonymized summary of your saved/applied/skipped preferences (never your name, resume, or activity history) can be included in an export used to improve matching. Turning it off (or deleting your account) removes you immediately — nothing is stored separately. See our <a href="/privacy.html" target="_blank" rel="noopener">privacy policy</a>.</p>
       <label class="form-label toggle-row">
@@ -498,6 +506,7 @@
               <option value="match">Skill match</option>
               <option value="name">Name A–Z</option>
               <option value="recent">Recently found</option>
+              <option value="least-contested">Least contested first</option>
             </select>
           </div>
         </div>

@@ -108,6 +108,29 @@ test('signup, login, me, and account deletion', async () => {
   assert.equal(meAfterToggles.alertsEnabled, false);
   assert.equal(meAfterToggles.trainingDataConsent, true);
 
+  // Theme preference: defaults dark, round-trips through /me, rejects bad values.
+  assert.equal(meAfterToggles.themePreference, 'dark');
+  const badThemeRes = await fetch(`${baseUrl}/api/auth/theme`, {
+    method: 'PATCH',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: 'not-a-real-theme' }),
+  });
+  assert.equal(badThemeRes.status, 400);
+  const themePatchRes = await fetch(`${baseUrl}/api/auth/theme`, {
+    method: 'PATCH',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: 'apple' }),
+  });
+  assert.equal(themePatchRes.status, 200);
+  const meAfterTheme = await (await fetch(`${baseUrl}/api/auth/me`, { headers: { Cookie: cookie } })).json();
+  assert.equal(meAfterTheme.themePreference, 'apple');
+  const themeNoAuthRes = await fetch(`${baseUrl}/api/auth/theme`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: 'apple' }),
+  });
+  assert.equal(themeNoAuthRes.status, 401);
+
   // Deleting with the wrong password must fail and leave the account intact.
   const badDeleteRes = await fetch(`${baseUrl}/api/auth/me`, {
     method: 'DELETE',

@@ -103,6 +103,10 @@ const AuthGate = (() => {
     };
   }
 
+  function applyTheme(pref) {
+    document.documentElement.setAttribute('data-theme', pref === 'apple' ? 'apple' : 'dark');
+  }
+
   function loadSession() {
     try {
       const raw = localStorage.getItem(SESSION_KEY);
@@ -117,6 +121,7 @@ const AuthGate = (() => {
   function clearSession() {
     session = null;
     try { localStorage.removeItem(SESSION_KEY); } catch {}
+    applyTheme('dark');
   }
 
   function syncLocalProfile(profile) {
@@ -775,6 +780,8 @@ const AuthGate = (() => {
       session.id = me.id;
       session.profile = { ...defaultProfile(), ...me.profile, email: me.email };
       session.onboardingComplete = me.onboardingComplete;
+      session.themePreference = me.themePreference;
+      applyTheme(session.themePreference);
       saveSession();
       draft = { ...session.profile };
       const needsSetup = profileNeedsOnboarding(session.profile);
@@ -818,6 +825,8 @@ const AuthGate = (() => {
     session.onboardingComplete = me.onboardingComplete;
     session.alertsEnabled = me.alertsEnabled;
     session.trainingDataConsent = me.trainingDataConsent;
+    session.themePreference = me.themePreference;
+    applyTheme(session.themePreference);
     saveSession();
     syncLocalProfile(session.profile);
     return session.profile;
@@ -843,7 +852,7 @@ const AuthGate = (() => {
 
   return {
     boot, logout, deleteAccount, reopenOnboarding, getSession, getProfile, isLoggedIn, showLogin,
-    saveProfileToServer, refreshProfile, profileNeedsOnboarding, getProfileFormOptions,
+    saveProfileToServer, refreshProfile, profileNeedsOnboarding, getProfileFormOptions, applyTheme,
     authHeaders,
   };
 })();

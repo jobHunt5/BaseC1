@@ -201,7 +201,7 @@ router.post('/companies/:id/refresh-jobs', async (req, res) => {
   if (!c) return res.status(404).json({ error: 'not found' });
   try {
     const jobs = await findJobsForCompany(c, { external: true });
-    await syncJobsForCompany(c.id, jobs, { ok: true, replace: true });
+    await syncJobsForCompany(c.id, jobs, { ok: true });
     res.json({
       company_id: c.id,
       fetched: jobs.length,
@@ -268,7 +268,7 @@ router.post('/companies/:id/enrich', async (req, res) => {
     if (depth === 'full' && (refreshed.careers_url || refreshed.website)) {
       try {
         const jobs = await findJobsForCompany(refreshed, { external: true });
-        await syncJobsForCompany(c.id, jobs, { ok: true, replace: true });
+        await syncJobsForCompany(c.id, jobs, { ok: true });
       } catch (jobErr) {
         console.warn('[enrich] job fetch failed:', c.name, jobErr.message);
       }

@@ -91,7 +91,7 @@ async function runDeepScan(companyId) {
   if (refreshed.careers_url || refreshed.website) {
     try {
       const jobs = await findJobsForCompany(refreshed, { external: true });
-      await syncJobsForCompany(c.id, jobs, { ok: true, replace: true });
+      await syncJobsForCompany(c.id, jobs, { ok: true });
       const atsSource = jobs.find(j => j.source && j.source !== 'careers-page' && !BOARD_JOB_SOURCES.has(j.source));
       await updateScrapeStatus(c.id, {
         status: jobs.length ? 'ok' : 'partial',

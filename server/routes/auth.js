@@ -24,6 +24,7 @@ const crypto = require('crypto');
 const {
   upsertUser, getUserByEmail, getUserById, getAllSettings, setSetting, setPasswordHash, deleteUser,
   setEmailVerifyToken, verifyEmailByToken, getUserByUnsubscribeToken, setAlertsEnabled, setTrainingDataConsent,
+  setThemePreference,
 } = require('../db');
 const { encrypt } = require('../services/cryptoService');
 const { hashPassword, verifyPassword } = require('../services/passwordService');
@@ -275,6 +276,7 @@ router.get('/me', async (req, res) => {
     emailVerified: user.emailVerified,
     alertsEnabled: user.alertsEnabled,
     trainingDataConsent: user.trainingDataConsent,
+    themePreference: user.themePreference,
   });
 });
 
@@ -313,6 +315,17 @@ router.patch('/training-consent', async (req, res) => {
   if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled (boolean) required' });
   await setTrainingDataConsent(user.id, enabled);
   res.json({ ok: true, enabled });
+});
+
+const THEME_VALUES = ['dark', 'apple'];
+
+router.patch('/theme', async (req, res) => {
+  const user = await getUserFromRequest(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  const { value } = req.body || {};
+  if (!THEME_VALUES.includes(value)) return res.status(400).json({ error: `value must be one of: ${THEME_VALUES.join(', ')}` });
+  await setThemePreference(user.id, value);
+  res.json({ ok: true, themePreference: value });
 });
 
 // Rate-limited the same as login attempts — reuses the per-(ip,email)

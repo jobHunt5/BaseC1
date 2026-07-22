@@ -741,6 +741,8 @@ const App = (() => {
     if (alertsBox) alertsBox.checked = AuthGate.getSession?.()?.alertsEnabled !== false;
     const consentBox = document.getElementById('profTrainingConsent');
     if (consentBox) consentBox.checked = AuthGate.getSession?.()?.trainingDataConsent === true;
+    const themeBox = document.getElementById('profAppleTheme');
+    if (themeBox) themeBox.checked = AuthGate.getSession?.()?.themePreference === 'apple';
     document.getElementById('profileModal').classList.add('show');
   }
 
@@ -777,6 +779,27 @@ const App = (() => {
       toast('Could not update this setting — try again', 'error');
       const box = document.getElementById('profTrainingConsent');
       if (box) box.checked = !enabled;
+    }
+  }
+
+  async function toggleTheme(useApple) {
+    const value = useApple ? 'apple' : 'dark';
+    try {
+      const resp = await fetch('/api/auth/theme', {
+        method: 'PATCH',
+        headers: { ...AuthGate.authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      });
+      if (!resp.ok) throw new Error('failed');
+      const sess = AuthGate.getSession?.();
+      if (sess) sess.themePreference = value;
+      AuthGate.applyTheme(value);
+      if (window.AreaHuntMap?.setMode) window.AreaHuntMap.setMode(value === 'apple' ? 'light' : 'dark');
+      toast(useApple ? 'Apple design mode turned on' : 'Apple design mode turned off', 'success');
+    } catch {
+      toast('Could not update theme — try again', 'error');
+      const box = document.getElementById('profAppleTheme');
+      if (box) box.checked = !useApple;
     }
   }
 
@@ -1351,6 +1374,16 @@ const App = (() => {
 
   function companyOpenRoles(c) { return (c.jobs || []).length; }
 
+  // Average repost_count across a company's open roles — lower means its
+  // postings look genuinely open rather than already informally filled.
+  // Companies with no job data yet sort last, not first (Infinity).
+  function companyContestedness(c) {
+    const jobs = c.jobs || [];
+    if (!jobs.length) return Infinity;
+    const repostSum = jobs.reduce((sum, j) => sum + (j.repost_count || 0), 0);
+    return repostSum / jobs.length;
+  }
+
   function companyIsVerified(c) {
     if (c.profile?.trust?.level === 'high') return true;
     if (isVerifiedEmail(c)) return true;
@@ -1414,6 +1447,7 @@ const App = (() => {
         case 'match':    return companyMatchCount(b) - companyMatchCount(a) || companyRank(b) - companyRank(a);
         case 'name':     return String(a.name || '').localeCompare(String(b.name || ''));
         case 'recent':   return (idx.get(String(b.id)) ?? 0) - (idx.get(String(a.id)) ?? 0);
+        case 'least-contested': return companyContestedness(a) - companyContestedness(b) || companyRank(b) - companyRank(a);
         case 'best':
         default:         return companyRank(b) - companyRank(a);
       }
@@ -2044,6 +2078,9 @@ const App = (() => {
       const txt = days < 0 ? `closed ${-days}d ago` : `closes in ${days}d`;
       meta.push(`<span class="deadline ${cls}" title="Deadline ${new Date(j.closes_at).toLocaleDateString()}">${ic('clock', 12)}${txt}</span>`);
     }
+    if (j.freshness_label === 'new' && j.hidden_market_label === 'likely-open') {
+      meta.push(`<span style="color:var(--green)" title="First time seen, no repost history">${ic('check', 12)}Freshly posted</span>`);
+    }
     if (j.visa_flag === 'sponsorship-available') {
       meta.push(`<span style="color:var(--green)">${ic('check', 12)}Sponsorship mentioned</span>`);
     } else if (j.visa_flag === 'citizens-only') {
@@ -2074,6 +2111,10 @@ const App = (() => {
       ? `<div class="job-suspicious-warning">${ic('warning', 13)}${j.visa_flag === 'clearance-required' ? 'Requires a security clearance, which effectively means citizens/PR only' : 'Requires Australian citizenship or permanent residency'} — based on your profile, you may not be eligible for this role.</div>`
       : '';
 
+    const repostWarning = j.hidden_market_label === 'possibly-filled'
+      ? `<div class="job-suspicious-warning">${ic('warning', 13)}${j.hidden_market_reason || `Reposted ${j.repost_count} times`} — this role may already be informally filled.</div>`
+      : '';
+
     return `
       <div class="job-row ${j.applied ? 'applied' : ''} ${j.looks_suspicious ? 'is-suspicious' : ''}">
         <input type="checkbox" class="job-checkbox" ${j.applied ? 'checked' : ''} onchange="App.toggleJobApplied(${j.id}, this.checked)" />
@@ -2082,6 +2123,7 @@ const App = (() => {
           <div class="job-meta">${meta.join('')}${trust}</div>
           ${suspiciousWarning}
           ${visaWarning}
+          ${repostWarning}
           ${desc}
           ${j.url ? `<a class="job-apply-link" href="${escapeAttr(j.url)}" target="_blank" rel="noopener">Open posting ${ic('chevron-right', 12, false)}</a>` : ''}
         </div>
@@ -3367,7 +3409,7 @@ const App = (() => {
     verifyCompanyEmail, generateOutreachEmails, applyOutreachVariant, sendOutreachEmail,
     onOutreachToInput, openMailApp,
     openProfile, closeProfile, closeProfileBackdrop, saveProfile, logout, deleteAccount, resendVerification,
-    toggleAlerts, toggleTrainingConsent,
+    toggleAlerts, toggleTrainingConsent, toggleTheme,
     downloadResume, downloadCoverLetter,
     resolveTeamLinkedIn, discoverPeople, reVerifyCompany, toggleMapMode,
     openAccountMenu, resetListControls, loadMoreCompanies,

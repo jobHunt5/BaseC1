@@ -283,6 +283,13 @@ const ready = (async () => {
       expires_at BIGINT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_api_cache_expires ON api_cache(expires_at);
+    ALTER TABLE jobs ADD COLUMN IF NOT EXISTS first_seen_at BIGINT;
+    ALTER TABLE jobs ADD COLUMN IF NOT EXISTS removed_at BIGINT;
+    ALTER TABLE jobs ADD COLUMN IF NOT EXISTS repost_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE jobs ADD COLUMN IF NOT EXISTS title_norm TEXT;
+    CREATE INDEX IF NOT EXISTS idx_jobs_company_removed ON jobs(company_id, removed_at);
+    CREATE INDEX IF NOT EXISTS idx_jobs_company_titlenorm ON jobs(company_id, title_norm);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_preference TEXT NOT NULL DEFAULT 'dark';
   `);
 
   const { rows } = await pool.query('SELECT key, value FROM settings');
@@ -650,26 +657,34 @@ function safeJSON(s, fallback) {
 // --- jobs ---
 
 async function upsertJob(j) {
+  const { normalizeTitle } = require('./services/jobQualityService');
+  const now = nowMs();
   await run(`
     INSERT INTO jobs (
       company_id, title, job_type, location, url, salary, source,
-      department, description, posted_at, closes_at, remote, fetched_at
+      department, description, posted_at, closes_at, remote, fetched_at,
+      title_norm, first_seen_at, removed_at, repost_count
     )
     VALUES (
       @company_id, @title, @job_type, @location, @url, @salary, @source,
-      @department, @description, @posted_at, @closes_at, @remote, @now
+      @department, @description, @posted_at, @closes_at, @remote, @now,
+      @title_norm, @first_seen_at, NULL, @repost_count
     )
     ON CONFLICT(company_id, title, url) DO UPDATE SET
-      job_type    = excluded.job_type,
-      location    = excluded.location,
-      salary      = excluded.salary,
-      source      = excluded.source,
-      department  = excluded.department,
-      description = excluded.description,
-      posted_at   = COALESCE(excluded.posted_at, jobs.posted_at),
-      closes_at   = COALESCE(excluded.closes_at, jobs.closes_at),
-      remote      = excluded.remote,
-      fetched_at  = excluded.fetched_at
+      job_type      = excluded.job_type,
+      location      = excluded.location,
+      salary        = excluded.salary,
+      source        = excluded.source,
+      department    = excluded.department,
+      description   = excluded.description,
+      posted_at     = COALESCE(excluded.posted_at, jobs.posted_at),
+      closes_at     = COALESCE(excluded.closes_at, jobs.closes_at),
+      remote        = excluded.remote,
+      fetched_at    = excluded.fetched_at,
+      title_norm    = excluded.title_norm,
+      first_seen_at = COALESCE(jobs.first_seen_at, excluded.first_seen_at),
+      repost_count  = jobs.repost_count + CASE WHEN jobs.removed_at IS NOT NULL THEN 1 ELSE 0 END,
+      removed_at    = NULL
   `, {
     company_id: j.company_id,
     title: j.title,
@@ -683,7 +698,10 @@ async function upsertJob(j) {
     posted_at: j.posted_at || null,
     closes_at: j.closes_at || null,
     remote: j.remote ? 1 : 0,
-    now: nowMs(),
+    now,
+    title_norm: j.title_norm ?? normalizeTitle(j.title),
+    first_seen_at: j.first_seen_at ?? (j.posted_at || now),
+    repost_count: j.repost_count ?? 0,
   });
 }
 
@@ -740,30 +758,89 @@ async function getJob(id, userId) {
   return hydrateJob(row);
 }
 
-async function syncJobsForCompany(companyId, jobs, { ok = true, replace = false } = {}) {
+// A job still counts as "applied" if any user has an application row for it
+// — jobs.applied itself is dead (never written; applied-tracking lives in
+// user_job_applied) and must never gate deletion/removal decisions.
+const JOB_NOT_APPLIED = `NOT EXISTS (SELECT 1 FROM user_job_applied uja WHERE uja.job_id = jobs.id)`;
+
+// Soft-removes jobs missing from a fresh scrape instead of hard-deleting
+// them, so a later repost (possibly under a new listing URL) can still be
+// recognized as the same underlying role rather than scored as brand new.
+// Applied jobs are never touched, soft-removed, or pruned.
+async function syncJobsForCompany(companyId, jobs, { ok = true } = {}) {
   if (!ok) return;
-  if (replace) await run(`DELETE FROM jobs WHERE company_id = @company_id AND applied = 0`, { company_id: companyId });
-  if (!jobs || jobs.length === 0) return;
-  if (!replace) await run(`DELETE FROM jobs WHERE company_id = @company_id AND applied = 0`, { company_id: companyId });
-  for (const j of jobs) {
-    await upsertJob({ company_id: companyId, ...j });
+  const { normalizeTitle, REPOST_RETENTION_MS } = require('./services/jobQualityService');
+  const now = nowMs();
+  const cutoff = now - REPOST_RETENTION_MS;
+  const incoming = jobs || [];
+  const keyOf = j => `${j.title || ''} ${j.url || ''}`;
+  const incomingKeys = new Set(incoming.map(keyOf));
+
+  const active = await all(`
+    SELECT id, title, url FROM jobs
+    WHERE company_id = @company_id AND removed_at IS NULL AND ${JOB_NOT_APPLIED}
+  `, { company_id: companyId });
+  const staleIds = active.filter(r => !incomingKeys.has(keyOf(r))).map(r => r.id);
+  if (staleIds.length) {
+    await run(`UPDATE jobs SET removed_at = @now WHERE id = ANY(@ids)`, { now, ids: staleIds });
   }
+
+  for (const j of incoming) {
+    const title_norm = normalizeTitle(j.title);
+    // Same role, reposted under a new URL: only ever matched against rows
+    // that have already vanished from a scan, so two concurrently-open
+    // jobs with similar titles never collide with each other.
+    const prior = await get(`
+      SELECT id, first_seen_at, repost_count FROM jobs
+      WHERE company_id = @company_id
+        AND title_norm = @title_norm
+        AND removed_at IS NOT NULL
+        AND removed_at >= @cutoff
+        AND NOT (title = @title AND url IS NOT DISTINCT FROM @url)
+      ORDER BY removed_at DESC LIMIT 1
+    `, { company_id: companyId, title_norm, cutoff, title: j.title, url: j.url || null });
+
+    await upsertJob({
+      company_id: companyId,
+      ...j,
+      title_norm,
+      first_seen_at: prior ? prior.first_seen_at : undefined,
+      repost_count: prior ? prior.repost_count + 1 : undefined,
+    });
+    // Merge the stale lineage into the new row rather than forking history.
+    if (prior) await run(`DELETE FROM jobs WHERE id = @id`, { id: prior.id });
+  }
+
+  // Opportunistic pruning bounds table growth without a separate cron —
+  // rides along on every sync instead.
+  await run(`
+    DELETE FROM jobs
+    WHERE company_id = @company_id AND removed_at IS NOT NULL AND removed_at < @cutoff AND ${JOB_NOT_APPLIED}
+  `, { company_id: companyId, cutoff });
+
   await scoreJobsForCompany(companyId);
 }
 
 // Runs the (cheap, local, no network) fake/scam-signal scorer over every job
 // currently stored for a company and persists the result. Called right
 // after jobs are synced so a quality score/flags are ready by the time the
-// frontend asks for them — never on the request path itself.
+// frontend asks for them — never on the request path itself. Also
+// self-heals title_norm/first_seen_at on any row predating those columns.
 async function scoreJobsForCompany(companyId) {
-  const { scoreJobQuality } = require('./services/jobQualityService');
+  const { scoreJobQuality, normalizeTitle } = require('./services/jobQualityService');
   const { detectVisaFlagForJob } = require('./services/visaDetectionService');
   const company = await get(`SELECT * FROM companies WHERE id = @id`, { id: companyId });
   const freshJobs = await all(`SELECT * FROM jobs WHERE company_id = @company_id ORDER BY id ASC`, { company_id: companyId });
   for (const job of freshJobs) {
     const { score, flags } = scoreJobQuality(job, company);
     await setJobQuality(job.id, score, flags);
-    await run(`UPDATE jobs SET visa_flag = @visa_flag WHERE id = @id`, { visa_flag: detectVisaFlagForJob(job), id: job.id });
+    await run(`
+      UPDATE jobs SET
+        visa_flag     = @visa_flag,
+        title_norm    = COALESCE(title_norm, @title_norm),
+        first_seen_at = COALESCE(first_seen_at, posted_at, fetched_at)
+      WHERE id = @id
+    `, { visa_flag: detectVisaFlagForJob(job), id: job.id, title_norm: normalizeTitle(job.title) });
   }
 }
 
@@ -877,6 +954,11 @@ async function getUserByUnsubscribeToken(token) {
 async function setTrainingDataConsent(userId, enabled) {
   await run(`UPDATE users SET training_data_consent = @enabled, updated_at = @now WHERE id = @id`,
     { id: userId, enabled: enabled ? 1 : 0, now: nowMs() });
+}
+
+async function setThemePreference(userId, value) {
+  await run(`UPDATE users SET theme_preference = @value, updated_at = @now WHERE id = @id`,
+    { id: userId, value, now: nowMs() });
 }
 
 // Only consenting users' rows — the query itself is the enforcement point
@@ -1177,6 +1259,7 @@ function hydrateUser(row) {
     emailVerified: !!row.email_verified,
     alertsEnabled: row.alerts_enabled == null ? true : !!row.alerts_enabled,
     trainingDataConsent: !!row.training_data_consent,
+    themePreference: row.theme_preference || 'dark',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1326,6 +1409,7 @@ module.exports = {
   setUnsubscribeToken,
   getUserByUnsubscribeToken,
   setTrainingDataConsent,
+  setThemePreference,
   getConsentingLearnedWeights,
   getRecentlyFetchedJobsWithCompany,
   getTeam,

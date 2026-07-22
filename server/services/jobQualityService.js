@@ -52,6 +52,44 @@ function freshnessLabel(postedAt) {
   return 'older';
 }
 
+// How many days a soft-removed job is still eligible to be matched as a
+// "repost" of a new listing with a different URL — beyond this it's treated
+// as an unrelated posting, and the stale row gets pruned.
+const REPOST_RETENTION_DAYS = 150;
+const REPOST_RETENTION_MS = REPOST_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+const SENIORITY_WORDS = /\b(senior|sr|junior|jr|lead|principal|staff|entry.level|graduate|grad|i{1,3}|iv|v)\b/g;
+
+// Collapses "Senior Nurse (Casual)" and "Nurse - Casual" toward the same
+// key so a repost under a new listing URL/ID can still be recognized as
+// the same underlying role, not scored as a brand-new posting.
+function normalizeTitle(title) {
+  if (!title) return '';
+  return title
+    .toLowerCase()
+    .replace(/\(.*?\)/g, ' ')
+    .replace(SENIORITY_WORDS, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+// "Hidden market" signal — separate from quality/scam scoring, this asks
+// whether a posting looks genuinely open (first time seen, no repost
+// history) or likely already informally filled (reposted repeatedly).
+// Computed live on read, same as freshnessLabel, not persisted.
+function hiddenMarketLabel(job) {
+  const repostCount = job.repost_count || 0;
+  if (repostCount >= 3) {
+    return { label: 'possibly-filled', repostCount, reason: `Reposted ${repostCount} times — may already be informally filled` };
+  }
+  if (repostCount === 0 && job.first_seen_at && !job.removed_at) {
+    const days = (Date.now() - job.first_seen_at) / (24 * 60 * 60 * 1000);
+    if (days <= 7) return { label: 'likely-open', repostCount, reason: 'First time seen, no repost history' };
+  }
+  return { label: null, repostCount, reason: null };
+}
+
 function sameHost(a, b) {
   try { return new URL(a).hostname.replace(/^www\./, '') === new URL(b).hostname.replace(/^www\./, ''); }
   catch { return false; }
@@ -88,4 +126,4 @@ function scoreJobQuality(job, company) {
   return { score, flags };
 }
 
-module.exports = { scoreJobQuality, freshnessLabel };
+module.exports = { scoreJobQuality, freshnessLabel, hiddenMarketLabel, normalizeTitle, REPOST_RETENTION_MS };

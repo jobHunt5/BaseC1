@@ -11,7 +11,7 @@ const {
 } = require('./trustService');
 const { listJobsForCompany, getJobQualityForCompany, getLearnedWeights } = require('../db');
 const { scoreCompanyByLearning } = require('./matchLearningService');
-const { freshnessLabel } = require('./jobQualityService');
+const { freshnessLabel, hiddenMarketLabel } = require('./jobQualityService');
 const { seniorityRank } = require('./enrichService');
 
 const BOARD_SOURCES = new Set(['seek', 'indeed', 'linkedin-jobs', 'jora']);
@@ -83,6 +83,7 @@ function pickHiringContact(team, jobRows) {
 function enrichJobRow(job, qualityByJobId) {
   const confidence = job.confidence || jobConfidence(job.source);
   const quality = qualityByJobId?.get(job.id) || null;
+  const hidden = hiddenMarketLabel(job);
   return {
     ...job,
     confidence,
@@ -96,6 +97,12 @@ function enrichJobRow(job, qualityByJobId) {
     quality_flags: quality?.flags ?? [],
     looks_suspicious: quality != null && quality.score < 0.4,
     freshness_label: freshnessLabel(job.posted_at),
+    // "Hidden market" signal — is this genuinely still open (first time
+    // seen, no repost history) or possibly already informally filled
+    // (reposted repeatedly)? See jobQualityService.hiddenMarketLabel.
+    hidden_market_label: hidden.label,
+    repost_count: hidden.repostCount,
+    hidden_market_reason: hidden.reason,
   };
 }
 
