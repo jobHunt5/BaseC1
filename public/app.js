@@ -1777,21 +1777,12 @@ const App = (() => {
 
   // --- team / LinkedIn -----------------------------------------------------
 
-  function australianPlaceOf(addr) {
-    if (!addr) return 'Australia';
-    const suburb = suburbOf(addr);
-    const stateMatch = addr.match(/\b(VIC|NSW|QLD|WA|SA|TAS|ACT|NT)\b/i);
-    const stateNames = {
-      VIC: 'Victoria', NSW: 'New South Wales', QLD: 'Queensland', WA: 'Western Australia',
-      SA: 'South Australia', TAS: 'Tasmania', ACT: 'Australian Capital Territory', NT: 'Northern Territory',
-    };
-    const state = stateMatch ? (stateNames[stateMatch[1].toUpperCase()] || stateMatch[1]) : '';
-    return [suburb, state, 'Australia'].filter(Boolean).join(' ');
-  }
-
-  function linkedinSearchUrl(name, company, address) {
-    const q = encodeURIComponent([name, company, australianPlaceOf(address)].filter(Boolean).join(' ').trim());
-    return `https://www.linkedin.com/search/results/people/?keywords=${q}`;
+  function linkedinSearchUrl(name, company /* address dropped on purpose */) {
+    // Mirror the server (linkedinService.searchUrl): general /all/ search,
+    // name + company only. The /people/ tab + address tokens return zero for
+    // someone you're not connected to; this is how a human finds them.
+    const q = encodeURIComponent([name, company].filter(Boolean).join(' ').trim());
+    return `https://www.linkedin.com/search/results/all/?keywords=${q}`;
   }
 
   function avatarInitials(name) {
@@ -1808,8 +1799,8 @@ const App = (() => {
   }
 
   function linkedinPeopleSearchUrl(c) {
-    const q = encodeURIComponent([c.name, australianPlaceOf(c.address)].filter(Boolean).join(' '));
-    return `https://www.linkedin.com/search/results/people/?keywords=${q}&origin=FACETED_SEARCH`;
+    const q = encodeURIComponent(String(c.name || '').trim());
+    return `https://www.linkedin.com/search/results/all/?keywords=${q}`;
   }
 
   function renderTeamCard(c, member) {

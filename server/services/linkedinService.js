@@ -37,16 +37,26 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-function searchUrl(name, company, address) {
-  const loc = formatAustralianLocation(address);
-  const q = encodeURIComponent([name, company, loc].filter(Boolean).join(' ').trim());
-  return `https://www.linkedin.com/search/results/people/?keywords=${q}`;
+// Search LinkedIn the way a human successfully does it: the GENERAL (/all/)
+// results page, keyed on just name + company. The /people/ tab applies hard
+// filters (connection degree, current-company, location) that return zero
+// for someone the searcher isn't connected to; /all/ surfaces the person in
+// a People card regardless. And the address is deliberately dropped — every
+// extra location token is an AND filter that tanks the match to nothing
+// (verified: "Neil Zumpo eccoCONSULTANTS Clayton VIC 3168 Victoria Australia"
+// → no results; "neil zumpo eccoconsultants" → found). Company alone
+// disambiguates, and LinkedIn's fuzzy match tolerates a name mismatch
+// between the website ("eccoCONSULTANTS") and the profile employer
+// ("ECCO CONSULTING LIMITED"). `address` is kept in the signature for
+// callers but no longer used.
+function searchUrl(name, company, address) { // eslint-disable-line no-unused-vars
+  const q = encodeURIComponent([name, company].filter(Boolean).join(' ').trim());
+  return `https://www.linkedin.com/search/results/all/?keywords=${q}`;
 }
 
-function companyPeopleSearchUrl(companyName, address) {
-  const loc = formatAustralianLocation(address);
-  const q = encodeURIComponent([companyName, loc].filter(Boolean).join(' ').trim());
-  return `https://www.linkedin.com/search/results/people/?keywords=${q}&origin=FACETED_SEARCH`;
+function companyPeopleSearchUrl(companyName, address) { // eslint-disable-line no-unused-vars
+  const q = encodeURIComponent(String(companyName || '').trim());
+  return `https://www.linkedin.com/search/results/all/?keywords=${q}`;
 }
 
 function extractLinkedInCompanySlug(url) {
