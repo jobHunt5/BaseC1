@@ -35,7 +35,19 @@ jobs:
           # --schema=public only — Supabase's own internal schemas (auth,
           # storage, vault, graphql) aren't app data and would otherwise
           # bloat every backup and complicate a restore.
-          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" --no-owner --no-acl --schema=public -F c -f "backup/areahunt-$(date -u +%Y-%m-%dT%H-%M-%SZ).dump"
+          #
+          # CRITICAL: pg_dump must use the pooler's SESSION mode (port 5432),
+          # never the app's transaction mode (6543). pg_dump runs
+          # set_config('search_path', '', false) — session-level — as its own
+          # CVE-2018-1058 hardening. In transaction pooling that setting
+          # sticks to the shared server backend after pg_dump disconnects and
+          # leaks into the app's later transactions, which then fail with
+          # "relation does not exist" until the backend is recycled. This
+          # exact failure hit production intermittently after every 03:00
+          # backup until 2026-07-23. Session mode gives pg_dump a dedicated
+          # backend that dies with its session, taking the setting with it.
+          SESSION_URL="${DATABASE_URL/:6543/:5432}"
+          /usr/lib/postgresql/17/bin/pg_dump "$SESSION_URL" --no-owner --no-acl --schema=public -F c -f "backup/areahunt-$(date -u +%Y-%m-%dT%H-%M-%SZ).dump"
 
       - name: Upload backup artifact
         uses: actions/upload-artifact@v4
