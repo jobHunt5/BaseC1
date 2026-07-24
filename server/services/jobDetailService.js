@@ -24,8 +24,12 @@ const { getCached, setCached } = require('./apiCacheService');
 const DETAIL_TTL_MS = 1000 * 60 * 60 * 24 * 7; // full detail: postings don't change
 const MISS_TTL_MS = 1000 * 60 * 60 * 12;       // blocked/no-data: retry twice a day
 const MAX_DESCRIPTION_CHARS = 20000;           // full text for the training corpus, bounded
-const CONCURRENCY = parseInt(process.env.JOB_DETAIL_CONCURRENCY || '4', 10);
-const MAX_PER_BATCH = parseInt(process.env.JOB_DETAIL_MAX_PER_BATCH || '40', 10);
+// Kept modest for the 512MB free tier: each in-flight fetch holds a full
+// HTML page (LinkedIn/Seek pages run 0.5–1MB) plus its cheerio/JSON-LD parse.
+// 4-wide × 40 pages per scan was a real memory spike that could OOM a live
+// user scan. Raise both on a plan with more headroom.
+const CONCURRENCY = parseInt(process.env.JOB_DETAIL_CONCURRENCY || '2', 10);
+const MAX_PER_BATCH = parseInt(process.env.JOB_DETAIL_MAX_PER_BATCH || '15', 10);
 
 // In-memory per-source reach counters since boot — surfaced via /api/health
 // so "how often does LinkedIn actually let us in from Render" is a number,

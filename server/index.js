@@ -194,7 +194,12 @@ if (require.main === module) {
       // burst during the cold-boot window is what tipped the free instance
       // into an OOM restart loop. Wait for the instance to settle, then
       // enqueue a small batch (each subsequent scan re-triggers the rest).
-      const bootRescanN = parseInt(process.env.BOOT_RESCAN_LIMIT || '25', 10);
+      // Default 0 (off): even a delayed 25-company crawl burst re-spiked the
+      // 512MB free instance into a one-off OOM restart ~90s after each boot.
+      // On-demand scans re-enqueue what they touch anyway, so the boot
+      // re-crawl is a freshness nicety, not load-bearing. Set BOOT_RESCAN_LIMIT
+      // to a positive number on a plan with real memory headroom.
+      const bootRescanN = parseInt(process.env.BOOT_RESCAN_LIMIT || '0', 10);
       const bootRescanDelay = parseInt(process.env.BOOT_RESCAN_DELAY_MS || '90000', 10);
       if (bootRescanN > 0) {
         setTimeout(() => {
