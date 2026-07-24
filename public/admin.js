@@ -120,14 +120,66 @@
           <span class="admin-config-dot ${neural ? 'on' : 'warn'}"></span><span>Neural embeddings</span>
           <span class="admin-config-state">${neural ? 'on' : 'off — set EMBEDDINGS_PROVIDER + key to upgrade (v1 runs locally, no key)'}</span>
         </div>
+        <div class="admin-config-row">
+          <span class="admin-config-dot ${status.llm_reasoning ? 'on' : 'warn'}"></span><span>LLM reasoning</span>
+          <span class="admin-config-state">${status.llm_reasoning ? `on · ${escapeHtml(status.llm_model || '')}` : 'off — set OPENAI_API_KEY to switch on real AI reasoning'}</span>
+        </div>
         <div style="display:flex;gap:8px;margin-top:14px">
           <input type="text" id="aiQuery" class="admin-input" style="flex:1"
                  placeholder="e.g. senior react developer, node, aws, australian work rights"
                  onkeydown="if(event.key==='Enter')AdminApp.runAiMatch()" />
-          <button type="button" class="admin-btn admin-btn-primary" onclick="AdminApp.runAiMatch()">Match</button>
+          <button type="button" class="admin-btn admin-btn-outline" onclick="AdminApp.runAiMatch()">Match</button>
+          <button type="button" class="admin-btn admin-btn-primary" onclick="AdminApp.runAiAnalyze()"
+                  title="${status.llm_reasoning ? 'Real LLM reasoning over the matches' : 'Needs OPENAI_API_KEY on the server'}">Analyze with AI ✨</button>
         </div>
         <div id="aiResults" style="margin-top:14px"></div>
       </div>`;
+  }
+
+  async function runAiAnalyze() {
+    const q = (document.getElementById('aiQuery')?.value || '').trim();
+    const box = document.getElementById('aiResults');
+    if (!q) { box.innerHTML = '<div class="admin-empty-hint">Describe a candidate first (skills, experience, work rights).</div>'; return; }
+    box.innerHTML = '<div class="admin-loading">Reasoning over the matches with the LLM…</div>';
+    let data;
+    try {
+      data = await fetch(`/api/admin/ai/analyze?q=${encodeURIComponent(q)}`, { headers: authHeaders() }).then(r => r.json());
+    } catch (err) {
+      box.innerHTML = `<div class="admin-empty-hint">Analyze failed: ${escapeHtml(err.message)}</div>`;
+      return;
+    }
+    if (data.available === false) {
+      box.innerHTML = `<div class="admin-empty-hint" style="line-height:1.5">
+        <strong>Real AI reasoning is built but switched off.</strong><br>
+        Set <code>OPENAI_API_KEY</code> on the server (Render → Environment) and this becomes a real LLM
+        reading each candidate and job. The same key also switches on AI fit-scores and cover letters.
+      </div>`;
+      return;
+    }
+    if (data.error) { box.innerHTML = `<div class="admin-empty-hint">LLM call failed: ${escapeHtml(data.error)}</div>`; return; }
+    const a = data.analysis;
+    if (!a) { box.innerHTML = '<div class="admin-empty-hint">No jobs matched to reason over yet — the corpus may be small.</div>'; return; }
+    const matches = (a.matches || []).map(m => {
+      const title = m.url ? `<a href="${escapeHtml(m.url)}" target="_blank" rel="noopener">${escapeHtml(m.title)}</a>` : escapeHtml(m.title);
+      const co = m.company_name ? ` · ${escapeHtml(m.company_name)}` : '';
+      const barrier = m.barrier && !/^none/i.test(m.barrier) ? `<div class="admin-empty-hint" style="color:#e0a458">⚠ ${escapeHtml(m.barrier)}</div>` : '';
+      return `<div class="admin-quality-row" style="align-items:flex-start">
+        <div class="admin-quality-label" style="flex:1">
+          <div>${title}<span class="admin-empty-hint">${co}</span></div>
+          <div class="admin-empty-hint" style="color:#c9d1d9">${escapeHtml(m.why || '')}</div>
+          ${barrier}
+        </div>
+        ${window.AdminCharts.meter(m.fit, AdminCharts.COLORS.green)}
+        <div class="admin-quality-pct">${m.fit}%</div>
+      </div>`;
+    }).join('');
+    box.innerHTML = `
+      <div class="admin-card" style="background:rgba(88,166,255,0.06);border:1px solid rgba(88,166,255,0.2);margin-bottom:12px">
+        <div class="admin-empty-hint" style="text-transform:uppercase;letter-spacing:.05em;font-size:11px">AI read · ${escapeHtml(data.model || '')}</div>
+        <div style="margin:6px 0;line-height:1.5">${escapeHtml(a.summary || '')}</div>
+        ${a.advice ? `<div style="margin-top:8px"><strong>Next step:</strong> ${escapeHtml(a.advice)}</div>` : ''}
+      </div>
+      ${matches}`;
   }
 
   async function runAiMatch() {
@@ -615,7 +667,7 @@
   }
 
   window.AdminApp = {
-    login, logout, switchTab, runAiMatch,
+    login, logout, switchTab, runAiMatch, runAiAnalyze,
     openUserDrawer, closeUserDrawer, toggleSuspend, deleteUserConfirm,
     updateSetting,
   };

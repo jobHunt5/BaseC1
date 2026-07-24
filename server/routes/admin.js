@@ -21,6 +21,7 @@ const { getLearningStats } = require('../services/matchLearningService');
 const { getSettingsWithMeta, updateSetting } = require('../services/settingsService');
 const { buildTrainingExport } = require('../services/trainingExportService');
 const aiMatch = require('../services/aiMatchService');
+const aiAnalyst = require('../services/aiAnalystService');
 const { getAdminFromRequest } = require('./adminAuth');
 const {
   status: getSerperStatus, getUsageToday: getSerperUsage, budgetLimit: getSerperBudget,
@@ -96,7 +97,11 @@ router.get('/training-export', async (req, res) => {
 
 router.get('/ai/status', async (req, res) => {
   try {
-    res.json(await aiMatch.status());
+    const status = await aiMatch.status();
+    // Whether the real LLM reasoning layer is switched on (needs an API key).
+    status.llm_reasoning = aiAnalyst.hasKey();
+    status.llm_model = aiAnalyst.hasKey() ? aiAnalyst.model() : null;
+    res.json(status);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -108,6 +113,18 @@ router.get('/ai/match', async (req, res) => {
   if (!q) return res.status(400).json({ error: 'q (a skills/profile query) is required' });
   try {
     res.json({ query: q, ...(await aiMatch.matchJobs(q, { limit })) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Real LLM reasoning over the retrieved shortlist. Dormant (available:false)
+// until OPENAI_API_KEY is set on the server.
+router.get('/ai/analyze', async (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 2000);
+  if (!q) return res.status(400).json({ error: 'q (a candidate description) is required' });
+  try {
+    res.json({ query: q, ...(await aiAnalyst.analyze(q, { limit: 8 })) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

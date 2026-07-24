@@ -60,3 +60,16 @@ test('results never exceed the requested limit', () => {
   const index = buildIndex(DOCS);
   assert.ok(rank(index, 'developer engineer nurse coffee', { limit: 2 }).length <= 2);
 });
+
+// --- AI reasoning layer (aiAnalystService) — dormant-without-key contract ---
+
+const aiAnalyst = require('../server/services/aiAnalystService');
+
+test('analyst reports a model id and is dormant (available:false) without an API key', async () => {
+  // Test env has no OPENAI_API_KEY — the feature must degrade, never throw.
+  assert.equal(typeof aiAnalyst.model(), 'string');
+  if (!aiAnalyst.hasKey()) {
+    const r = await aiAnalyst.analyze('react developer', { limit: 3 });
+    assert.deepEqual(r, { available: false }, 'no key must return {available:false}, not an error');
+  }
+});
