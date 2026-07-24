@@ -15,7 +15,10 @@ const {
 // overrides onto process.env at runtime, and a module-level const here
 // would freeze whatever value was set at require() time, silently ignoring
 // any later change until the process restarts.
-function concurrency() { return parseInt(process.env.DEEP_SCAN_CONCURRENCY || '4', 10); }
+// Default lowered 4→2: each company's deep scan now also fetches full job
+// postings (jobDetailService), so peak memory per in-flight company is
+// higher — 4-wide crawling contributed to the 512MB free-tier OOM loop.
+function concurrency() { return parseInt(process.env.DEEP_SCAN_CONCURRENCY || '2', 10); }
 
 const queue = [];
 let active = 0;

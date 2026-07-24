@@ -172,19 +172,37 @@ if (require.main === module) {
       const provider = getProvider();
       console.log(`AreaHunt running on http://localhost:${PORT}`);
       console.log(`Places provider: ${provider}${provider === 'google' && !process.env.GOOGLE_MAPS_API_KEY ? '  (WARNING: no GOOGLE_MAPS_API_KEY set)' : ''}`);
-      warmupPdfEngine();
+      // PDF/Chrome warmup at boot was OOM-killing the 512MB free instance —
+      // launching headless Chrome the instant we start listening, on top of
+      // the deep-scan re-enqueue below, pushed a cold instance past its
+      // memory limit and Render SIGKILL'd it in a ~90s loop. Chrome is now
+      // launched lazily on the first real PDF request instead (warmup already
+      // fell back to that anyway). Set PDF_WARMUP=1 to re-enable on a plan
+      // with more headroom.
+      if (process.env.PDF_WARMUP === '1') warmupPdfEngine();
+
       // One-time data-repair passes — run in the background after the
       // server is already accepting traffic, same as before; errors here
       // shouldn't be able to crash the process or block startup.
       repairOpportunityTargetClassification().catch(err => console.error('[repair]', err));
       repairBogusScrapedJobs().catch(err => console.error('[repair]', err));
       repairBogusTeamMembers().catch(err => console.error('[repair]', err));
+
       // Re-queue companies that never finished (or never started) a deep
-      // scan — the queue itself is in-memory only, so a restart would
-      // otherwise silently drop all of this instead of picking it back up.
-      db.getCompaniesNeedingRescan(200)
-        .then(ids => enqueueMany(ids))
-        .catch(err => console.error('[deep-scan] boot rescan failed', err));
+      // scan — the queue is in-memory only, so a restart would otherwise
+      // drop it. Deliberately DELAYED and CAPPED: running a 200-company crawl
+      // burst during the cold-boot window is what tipped the free instance
+      // into an OOM restart loop. Wait for the instance to settle, then
+      // enqueue a small batch (each subsequent scan re-triggers the rest).
+      const bootRescanN = parseInt(process.env.BOOT_RESCAN_LIMIT || '25', 10);
+      const bootRescanDelay = parseInt(process.env.BOOT_RESCAN_DELAY_MS || '90000', 10);
+      if (bootRescanN > 0) {
+        setTimeout(() => {
+          db.getCompaniesNeedingRescan(bootRescanN)
+            .then(ids => enqueueMany(ids))
+            .catch(err => console.error('[deep-scan] boot rescan failed', err));
+        }, bootRescanDelay).unref?.();
+      }
 
       // Proactive job-alert digests — checks every 30 min for freshly
       // scraped jobs matching a user's skills in an area they've scanned.
