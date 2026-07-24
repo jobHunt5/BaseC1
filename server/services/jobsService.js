@@ -1195,4 +1195,12 @@ module.exports = {
   mapBambooHrJobs,
   mapPersonioJobs,
   mapWorkdayJobs,
+  // Shared helpers reused by jobDetailService (single-posting-page parsing).
+  fetchHtml,
+  stripHtml,
+  decodeHtmlEntities,
+  snippet,
+  toMs,
+  isRemoteText,
+  formatSalaryRange,
 };

@@ -7,6 +7,7 @@
 const { formatAustralianLocation, extractCityFromAddress } = require('./linkedinService');
 const { serperSearch, isConfigured: serperConfigured } = require('./serperClient');
 const { getCached, setCached } = require('./apiCacheService');
+const { enrichJobsWithDetail } = require('./jobDetailService');
 
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 
@@ -149,6 +150,9 @@ async function findExternalBoardJobs(company, { limit = 15 } = {}) {
   }
 
   const out = merged.slice(0, limit);
+  // Upgrade snippet stubs to full postings (description/salary/dates) by
+  // fetching each job's real page — cached per URL, so the cost is paid once.
+  await enrichJobsWithDetail(out);
   await setCached(cacheKey, out, CACHE_TTL_MS);
   return out;
 }

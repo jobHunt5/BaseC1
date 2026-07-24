@@ -10,9 +10,11 @@
 // company — and clearly labelled by source.
 
 const axios = require('axios');
+const cheerio = require('cheerio');
 const { serperSearch, isConfigured: serperConfigured } = require('./serperClient');
 const { detectVisaFlag } = require('./visaDetectionService');
 const { getCached, setCached } = require('./apiCacheService');
+const { enrichJobsWithDetail } = require('./jobDetailService');
 
 const CACHE_TTL_MS = 1000 * 60 * 30;
 
@@ -138,6 +140,53 @@ async function searchAreaBoard(board, suburb, state, terms) {
   return out;
 }
 
+// LinkedIn's public guest job search — the same unauthenticated endpoint the
+// logged-out linkedin.com/jobs page uses. Unlike the Serper path this returns
+// currently-live postings directly from the board (no search-index staleness,
+// no Serper credits), which matters doubly since Google's index of job URLs
+// goes stale fast — expired postings redirect to a generic search page.
+// Plain fetch, the app's normal UA, no auth, public data only.
+async function fetchLinkedInGuestJobs(suburb, state, terms) {
+  const location = [suburb, state, 'Australia'].filter(Boolean).join(', ');
+  const termList = (Array.isArray(terms) ? terms.filter(Boolean) : [terms].filter(Boolean));
+  if (!termList.length) termList.push('');
+
+  const out = [];
+  for (const term of termList.slice(0, 4)) {
+    try {
+      const resp = await axios.get('https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search', {
+        params: { keywords: term, location, start: 0 },
+        headers: { 'User-Agent': process.env.ENRICH_USER_AGENT || 'AreaHuntBot/1.0' },
+        timeout: 10000,
+        validateStatus: () => true,
+      });
+      if (resp.status !== 200 || typeof resp.data !== 'string') continue;
+      const $ = cheerio.load(resp.data);
+      $('.base-card, li').each((_, el) => {
+        const $el = $(el);
+        const url = ($el.find('a.base-card__full-link, a[href*="/jobs/view/"]').attr('href') || '').split('?')[0];
+        const title = $el.find('.base-search-card__title').text().replace(/\s+/g, ' ').trim();
+        const company = $el.find('.base-search-card__subtitle').text().replace(/\s+/g, ' ').trim();
+        const loc = $el.find('.job-search-card__location').text().replace(/\s+/g, ' ').trim();
+        if (!url || !title || !/linkedin\.com\/jobs\/view\//.test(url)) return;
+        out.push({
+          title: title.slice(0, 120),
+          company_name: company.slice(0, 80) || null,
+          url,
+          location: loc || location,
+          description: '',
+          remote: /\bremote\b/i.test(title),
+          source: 'linkedin-jobs',
+          confidence: 'board',
+          visa_flag: null,
+        });
+      });
+    } catch { /* one failed term never kills the scan */ }
+    await sleep(300);
+  }
+  return out;
+}
+
 /**
  * Find jobs across an area (bbox) from the major boards.
  *   bounds: { south, west, north, east }
@@ -145,8 +194,6 @@ async function searchAreaBoard(board, suburb, state, terms) {
  *     (one query per term per board, e.g. the user's selected industries)
  */
 async function findAreaJobs(bounds, { terms = '', limit = 100 } = {}) {
-  if (!serperConfigured()) return { enabled: false, suburb: '', jobs: [] };
-
   const { suburb, state } = await reverseGeocodeSuburb(bounds);
   if (!suburb && !state) return { enabled: true, suburb: '', jobs: [] };
 
@@ -157,31 +204,71 @@ async function findAreaJobs(bounds, { terms = '', limit = 100 } = {}) {
     return { enabled: true, suburb, jobs: cached.slice(0, limit) };
   }
 
-  const batches = await Promise.all(
-    AREA_JOB_BOARDS.map(board => searchAreaBoard(board, suburb, state, terms)),
-  );
+  // Serper (Google-index) results for every board, plus LinkedIn's own live
+  // guest search — the latter needs no Serper key/credits, so an exhausted
+  // Serper account degrades area search to LinkedIn-only instead of to zero.
+  const batches = await Promise.all([
+    ...(serperConfigured()
+      ? AREA_JOB_BOARDS.map(board => searchAreaBoard(board, suburb, state, terms))
+      : []),
+    fetchLinkedInGuestJobs(suburb, state, terms),
+  ]);
 
   const merged = [];
   const seen = new Set();
   for (const batch of batches) {
     for (const j of batch) {
       const key = `${j.title.toLowerCase()}|${(j.company_name || '').toLowerCase()}|${j.source}`;
-      if (seen.has(key)) continue;
+      const urlKey = (j.url || '').toLowerCase();
+      if (seen.has(key) || (urlKey && seen.has(urlKey))) continue;
       seen.add(key);
+      if (urlKey) seen.add(urlKey);
       merged.push(j);
     }
   }
+
+  // Upgrade snippet stubs to full postings before caching or persisting —
+  // per-URL cached, so repeat scans of a suburb don't refetch anything.
+  await enrichJobsWithDetail(merged);
+
+  // A full description gives visa detection real text to work with — the
+  // search snippet was usually too short to tell either way.
+  for (const j of merged) {
+    if (j.description_full && !j.visa_flag) {
+      j.visa_flag = detectVisaFlag(`${j.title} ${j.description_full}`);
+    }
+  }
+
+  // Persist into the area_jobs corpus (previously these evaporated with the
+  // cache — a training corpus needs them kept). Lazy require: db.js sits
+  // upstream of some of this module's siblings; same pattern apiCacheService
+  // uses for the identical reason.
+  try {
+    const db = require('../db');
+    await db.saveAreaJobs(merged, suburb, state);
+  } catch (err) {
+    // Corpus persistence must never break a user-facing scan.
+    console.error('area_jobs persist failed:', err.message);
+  }
+
+  // Full descriptions are corpus/DB payload, not list-UI payload — 40 jobs
+  // × up to 20k chars would be a ~1MB scan response. Strip before caching so
+  // cache hits serve the lean shape too (the table row keeps the full text).
+  for (const j of merged) delete j.description_full;
 
   await setCached(cacheKey, merged, CACHE_TTL_MS);
   return { enabled: true, suburb, state, jobs: merged.slice(0, limit) };
 }
 
 function isAreaJobSearchEnabled() {
-  return serperConfigured();
+  // LinkedIn guest search works with no Serper key at all, so area job
+  // search is always available — Serper just widens it to the other boards.
+  return true;
 }
 
 module.exports = {
   findAreaJobs,
   isAreaJobSearchEnabled,
+  fetchLinkedInGuestJobs,
   reverseGeocodeSuburb,
 };

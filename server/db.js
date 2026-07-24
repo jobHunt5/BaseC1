@@ -290,6 +290,35 @@ const ready = (async () => {
     CREATE INDEX IF NOT EXISTS idx_jobs_company_removed ON jobs(company_id, removed_at);
     CREATE INDEX IF NOT EXISTS idx_jobs_company_titlenorm ON jobs(company_id, title_norm);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_preference TEXT NOT NULL DEFAULT 'dark';
+    ALTER TABLE jobs ADD COLUMN IF NOT EXISTS description_full TEXT;
+    ALTER TABLE jobs ADD COLUMN IF NOT EXISTS detail_status TEXT;
+
+    -- Area-wide board jobs (Seek/Indeed/LinkedIn/… found by suburb, not tied
+    -- to a discovered company). Previously computed live and thrown away with
+    -- the cache — persisted now so the enriched postings accumulate into the
+    -- training corpus instead of evaporating on every cache expiry.
+    CREATE TABLE IF NOT EXISTS area_jobs (
+      id            SERIAL PRIMARY KEY,
+      url           TEXT NOT NULL UNIQUE,
+      title         TEXT NOT NULL,
+      company_name  TEXT,
+      location      TEXT,
+      suburb        TEXT,
+      state         TEXT,
+      description   TEXT,
+      description_full TEXT,
+      salary        TEXT,
+      job_type      TEXT,
+      posted_at     BIGINT,
+      closes_at     BIGINT,
+      remote        INTEGER NOT NULL DEFAULT 0,
+      source        TEXT NOT NULL,
+      visa_flag     TEXT,
+      detail_status TEXT,
+      first_seen_at BIGINT NOT NULL,
+      last_seen_at  BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_area_jobs_suburb ON area_jobs(suburb, state);
   `);
 
   const { rows } = await pool.query('SELECT key, value FROM settings');
@@ -662,12 +691,14 @@ async function upsertJob(j) {
   await run(`
     INSERT INTO jobs (
       company_id, title, job_type, location, url, salary, source,
-      department, description, posted_at, closes_at, remote, fetched_at,
+      department, description, description_full, detail_status,
+      posted_at, closes_at, remote, fetched_at,
       title_norm, first_seen_at, removed_at, repost_count
     )
     VALUES (
       @company_id, @title, @job_type, @location, @url, @salary, @source,
-      @department, @description, @posted_at, @closes_at, @remote, @now,
+      @department, @description, @description_full, @detail_status,
+      @posted_at, @closes_at, @remote, @now,
       @title_norm, @first_seen_at, NULL, @repost_count
     )
     ON CONFLICT(company_id, title, url) DO UPDATE SET
@@ -677,6 +708,8 @@ async function upsertJob(j) {
       source        = excluded.source,
       department    = excluded.department,
       description   = excluded.description,
+      description_full = COALESCE(excluded.description_full, jobs.description_full),
+      detail_status = COALESCE(excluded.detail_status, jobs.detail_status),
       posted_at     = COALESCE(excluded.posted_at, jobs.posted_at),
       closes_at     = COALESCE(excluded.closes_at, jobs.closes_at),
       remote        = excluded.remote,
@@ -695,6 +728,8 @@ async function upsertJob(j) {
     source: j.source || 'careers-page',
     department: j.department || null,
     description: j.description || null,
+    description_full: j.description_full || null,
+    detail_status: j.detail_status || null,
     posted_at: j.posted_at || null,
     closes_at: j.closes_at || null,
     remote: j.remote ? 1 : 0,
@@ -710,7 +745,12 @@ const JOB_UJA_COLS = `(uja.user_id IS NOT NULL) AS uja_applied, uja.applied_at A
 
 function hydrateJob(row) {
   if (!row) return row;
-  return { ...row, applied: row.uja_applied ? 1 : 0, applied_at: row.uja_applied_at ?? null };
+  const out = { ...row, applied: row.uja_applied ? 1 : 0, applied_at: row.uja_applied_at ?? null };
+  // Training-corpus payload, not UI payload — up to 20k chars per job would
+  // bloat every company panel open. The corpus export reads it by its own
+  // query (getJobCorpus); the UI keeps the snippet `description`.
+  delete out.description_full;
+  return out;
 }
 
 async function listJobsForCompany(companyId, userId) {
@@ -970,6 +1010,102 @@ async function getConsentingLearnedWeights() {
     JOIN users u ON u.id = lw.user_id
     WHERE u.training_data_consent = 1
   `);
+}
+
+// Raw interaction events for consenting users only — exported pseudonymized
+// and day-coarsened by trainingExportService, never with real ids/timestamps.
+// Company is reduced to its category list + type: enough signal for preference
+// training, not enough to re-identify a person from a trail of specific
+// companies.
+async function getConsentingInteractions() {
+  return all(`
+    SELECT i.user_id, i.action, i.created_at,
+           c.cats AS company_cats, c.type AS company_type
+    FROM interactions i
+    JOIN users u ON u.id = i.user_id
+    JOIN companies c ON c.id = i.company_id
+    WHERE u.training_data_consent = 1
+    ORDER BY i.created_at
+  `);
+}
+
+// Job-posting corpus for training: public posting content only, joined to the
+// company's industry — deliberately no company_id/name and no per-user columns.
+async function getJobCorpus() {
+  return all(`
+    SELECT j.title, j.title_norm, COALESCE(j.description_full, j.description) AS description,
+           j.salary, j.job_type, j.location, j.remote, j.posted_at, j.closes_at,
+           j.source, j.repost_count, j.detail_status,
+           c.cats AS company_cats, c.type AS company_type
+    FROM jobs j
+    JOIN companies c ON c.id = j.company_id
+    WHERE COALESCE(j.description_full, j.description) IS NOT NULL
+  `);
+}
+
+async function getAreaJobCorpus() {
+  return all(`
+    SELECT title, company_name, COALESCE(description_full, description) AS description,
+           salary, job_type, location, suburb, state, remote, posted_at, closes_at,
+           source, visa_flag, detail_status
+    FROM area_jobs
+    WHERE COALESCE(description_full, description) IS NOT NULL
+  `);
+}
+
+// Upsert a batch of enriched area-board jobs, keyed by posting URL. Reposts
+// of the same URL just refresh last_seen_at; content columns take the newest
+// non-null value so a later successful detail fetch upgrades an old snippet
+// row rather than being ignored.
+async function saveAreaJobs(jobs, suburb, state) {
+  const now = nowMs();
+  for (const j of jobs || []) {
+    if (!j?.url || !j?.title) continue;
+    await run(`
+      INSERT INTO area_jobs (
+        url, title, company_name, location, suburb, state, description,
+        description_full, salary, job_type, posted_at, closes_at, remote,
+        source, visa_flag, detail_status, first_seen_at, last_seen_at
+      ) VALUES (
+        @url, @title, @company_name, @location, @suburb, @state, @description,
+        @description_full, @salary, @job_type, @posted_at, @closes_at, @remote,
+        @source, @visa_flag, @detail_status, @now, @now
+      )
+      ON CONFLICT(url) DO UPDATE SET
+        title            = excluded.title,
+        company_name     = COALESCE(excluded.company_name, area_jobs.company_name),
+        location         = COALESCE(excluded.location, area_jobs.location),
+        description      = COALESCE(excluded.description, area_jobs.description),
+        description_full = COALESCE(excluded.description_full, area_jobs.description_full),
+        salary           = COALESCE(excluded.salary, area_jobs.salary),
+        job_type         = COALESCE(excluded.job_type, area_jobs.job_type),
+        posted_at        = COALESCE(excluded.posted_at, area_jobs.posted_at),
+        closes_at        = COALESCE(excluded.closes_at, area_jobs.closes_at),
+        remote           = GREATEST(excluded.remote, area_jobs.remote),
+        visa_flag        = COALESCE(excluded.visa_flag, area_jobs.visa_flag),
+        detail_status    = CASE WHEN excluded.detail_status = 'full' THEN 'full'
+                                ELSE COALESCE(area_jobs.detail_status, excluded.detail_status) END,
+        last_seen_at     = excluded.last_seen_at
+    `, {
+      url: j.url,
+      title: j.title,
+      company_name: j.company_name || null,
+      location: j.location || null,
+      suburb: suburb || null,
+      state: state || null,
+      description: j.description || null,
+      description_full: j.description_full || null,
+      salary: j.salary || null,
+      job_type: j.job_type || null,
+      posted_at: j.posted_at || null,
+      closes_at: j.closes_at || null,
+      remote: j.remote ? 1 : 0,
+      source: j.source || 'board',
+      visa_flag: j.visa_flag || null,
+      detail_status: j.detail_status || null,
+      now,
+    });
+  }
 }
 
 // Jobs freshly synced within the lookback window, joined to their company —
@@ -1411,6 +1547,10 @@ module.exports = {
   setTrainingDataConsent,
   setThemePreference,
   getConsentingLearnedWeights,
+  getConsentingInteractions,
+  getJobCorpus,
+  getAreaJobCorpus,
+  saveAreaJobs,
   getRecentlyFetchedJobsWithCompany,
   getTeam,
   updateTeam,
