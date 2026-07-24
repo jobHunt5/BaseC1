@@ -20,6 +20,7 @@ const {
 const { getLearningStats } = require('../services/matchLearningService');
 const { getSettingsWithMeta, updateSetting } = require('../services/settingsService');
 const { buildTrainingExport } = require('../services/trainingExportService');
+const aiMatch = require('../services/aiMatchService');
 const { getAdminFromRequest } = require('./adminAuth');
 const {
   status: getSerperStatus, getUsageToday: getSerperUsage, budgetLimit: getSerperBudget,
@@ -87,6 +88,29 @@ router.get('/training-export', async (req, res) => {
   const data = await buildTrainingExport();
   res.set('Content-Disposition', `attachment; filename="training-export-${new Date().toISOString().slice(0, 10)}.json"`);
   res.json(data);
+});
+
+// ---- AI layer: semantic job matching ------------------------------------
+//   GET /api/admin/ai/status          -> matcher backend + corpus size
+//   GET /api/admin/ai/match?q=&limit= -> jobs ranked by meaning-overlap
+
+router.get('/ai/status', async (req, res) => {
+  try {
+    res.json(await aiMatch.status());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/ai/match', async (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 2000);
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50);
+  if (!q) return res.status(400).json({ error: 'q (a skills/profile query) is required' });
+  try {
+    res.json({ query: q, ...(await aiMatch.matchJobs(q, { limit })) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.get('/users', async (req, res) => {

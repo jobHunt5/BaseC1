@@ -82,9 +82,86 @@
     document.querySelectorAll('.admin-tab-panel').forEach(el => el.classList.add('hidden'));
     document.getElementById(`panel-${tab}`).classList.remove('hidden');
     if (tab === 'overview') loadOverview();
+    if (tab === 'ai') loadAi();
     if (tab === 'users') loadUsers();
     if (tab === 'settings') loadSettings();
     if (tab === 'audit') loadAuditLog();
+  }
+
+  // ---- AI: semantic job matching -------------------------------------
+
+  async function loadAi() {
+    const panel = document.getElementById('panel-ai');
+    panel.innerHTML = '<div class="admin-loading">Loading AI matcher…</div>';
+    let status;
+    try {
+      status = await fetch('/api/admin/ai/status', { headers: authHeaders() }).then(r => r.json());
+    } catch (err) {
+      panel.innerHTML = `<div class="admin-loading">Could not load the AI matcher (${escapeHtml(err.message)}).</div>`;
+      return;
+    }
+    const neural = status.neural_available;
+    panel.innerHTML = `
+      <div class="admin-card admin-card-wide">
+        <div class="admin-card-title">Semantic job matching</div>
+        <p class="admin-empty-hint" style="margin:2px 0 12px">
+          Paste a candidate's skills or a whole profile — the matcher ranks every job in the
+          corpus by <strong>meaning overlap</strong>, not keyword equality.
+        </p>
+        <div class="admin-config-row">
+          <span class="admin-config-dot on"></span><span>Engine</span>
+          <span class="admin-config-state">${escapeHtml(status.method)}</span>
+        </div>
+        <div class="admin-config-row">
+          <span class="admin-config-dot on"></span><span>Jobs indexed</span>
+          <span class="admin-config-state">${fmtNum(status.corpus_size)}</span>
+        </div>
+        <div class="admin-config-row">
+          <span class="admin-config-dot ${neural ? 'on' : 'warn'}"></span><span>Neural embeddings</span>
+          <span class="admin-config-state">${neural ? 'on' : 'off — set EMBEDDINGS_PROVIDER + key to upgrade (v1 runs locally, no key)'}</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <input type="text" id="aiQuery" class="admin-input" style="flex:1"
+                 placeholder="e.g. senior react developer, node, aws, australian work rights"
+                 onkeydown="if(event.key==='Enter')AdminApp.runAiMatch()" />
+          <button type="button" class="admin-btn admin-btn-primary" onclick="AdminApp.runAiMatch()">Match</button>
+        </div>
+        <div id="aiResults" style="margin-top:14px"></div>
+      </div>`;
+  }
+
+  async function runAiMatch() {
+    const q = (document.getElementById('aiQuery')?.value || '').trim();
+    const box = document.getElementById('aiResults');
+    if (!q) { box.innerHTML = '<div class="admin-empty-hint">Type some skills or a profile first.</div>'; return; }
+    box.innerHTML = '<div class="admin-loading">Ranking…</div>';
+    let data;
+    try {
+      data = await fetch(`/api/admin/ai/match?q=${encodeURIComponent(q)}&limit=15`, { headers: authHeaders() }).then(r => r.json());
+    } catch (err) {
+      box.innerHTML = `<div class="admin-empty-hint">Match failed: ${escapeHtml(err.message)}</div>`;
+      return;
+    }
+    const results = data.results || [];
+    if (!results.length) {
+      box.innerHTML = '<div class="admin-empty-hint">No matches — the corpus may be small, or none of these terms appear in any posting yet.</div>';
+      return;
+    }
+    const rows = results.map(r => {
+      const pct = Math.round(r.score * 100);
+      const co = r.company_name ? ` · ${escapeHtml(r.company_name)}` : '';
+      const loc = r.location ? ` · ${escapeHtml(r.location)}` : '';
+      const title = r.url
+        ? `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.title)}</a>`
+        : escapeHtml(r.title);
+      return `
+        <div class="admin-quality-row">
+          <div class="admin-quality-label">${title}<span class="admin-empty-hint">${co}${loc} · ${escapeHtml(r.source || '')}</span></div>
+          ${window.AdminCharts.meter(pct, AdminCharts.COLORS.blue)}
+          <div class="admin-quality-pct">${pct}%</div>
+        </div>`;
+    }).join('');
+    box.innerHTML = `<div class="admin-empty-hint" style="margin-bottom:8px">Top ${results.length} of ${fmtNum(data.corpus_size)} jobs · ${escapeHtml(data.method)}</div>${rows}`;
   }
 
   // ---- overview -------------------------------------------------------
@@ -538,7 +615,7 @@
   }
 
   window.AdminApp = {
-    login, logout, switchTab,
+    login, logout, switchTab, runAiMatch,
     openUserDrawer, closeUserDrawer, toggleSuspend, deleteUserConfirm,
     updateSetting,
   };

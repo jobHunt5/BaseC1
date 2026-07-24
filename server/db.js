@@ -1043,6 +1043,34 @@ async function getJobCorpus() {
   `);
 }
 
+// Every job with usable text, from both the per-company `jobs` table and the
+// standalone `area_jobs` table, in one shape — the corpus the admin AI
+// semantic matcher indexes. `ref` is a stable composite id so a result can be
+// traced back to its row/table.
+async function getMatchableJobs() {
+  // LEFT(..., 6000): the first ~6k chars are plenty for meaning-matching, and
+  // capping here bounds both the DB transfer and the in-memory index — a
+  // 512MB-free-tier guardrail, since description_full can run to 20k chars.
+  const [jobs, area] = await Promise.all([
+    all(`
+      SELECT j.id, j.title, j.url, j.location, j.source, c.name AS company_name,
+             LEFT(COALESCE(j.description_full, j.description, ''), 6000) AS text
+      FROM jobs j JOIN companies c ON c.id = j.company_id
+      WHERE COALESCE(j.description_full, j.description, '') <> ''
+    `),
+    all(`
+      SELECT id, title, url, location, source, company_name,
+             LEFT(COALESCE(description_full, description, ''), 6000) AS text
+      FROM area_jobs
+      WHERE COALESCE(description_full, description, '') <> ''
+    `),
+  ]);
+  return [
+    ...jobs.map(r => ({ ref: `job:${r.id}`, ...r })),
+    ...area.map(r => ({ ref: `area:${r.id}`, ...r })),
+  ];
+}
+
 async function getAreaJobCorpus() {
   return all(`
     SELECT title, company_name, COALESCE(description_full, description) AS description,
@@ -1550,6 +1578,7 @@ module.exports = {
   getConsentingInteractions,
   getJobCorpus,
   getAreaJobCorpus,
+  getMatchableJobs,
   saveAreaJobs,
   getRecentlyFetchedJobsWithCompany,
   getTeam,

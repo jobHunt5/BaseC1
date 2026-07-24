@@ -35,6 +35,7 @@
     <div class="admin-login-logo"><span class="logo-mark"><svg width="14" height="14"><use href="#icon-logo"></use></svg></span>Area<span>Hunt</span> <span class="admin-badge">Admin</span></div>
     <nav class="admin-tabs">
       <button type="button" class="admin-tab active" data-tab="overview" onclick="AdminApp.switchTab('overview')">Overview</button>
+      <button type="button" class="admin-tab" data-tab="ai" onclick="AdminApp.switchTab('ai')">AI</button>
       <button type="button" class="admin-tab" data-tab="users" onclick="AdminApp.switchTab('users')">Users</button>
       <button type="button" class="admin-tab" data-tab="settings" onclick="AdminApp.switchTab('settings')">Settings</button>
       <button type="button" class="admin-tab" data-tab="audit" onclick="AdminApp.switchTab('audit')">Audit Log</button>
@@ -44,6 +45,7 @@
 
   <main class="admin-main">
     <section class="admin-tab-panel" id="panel-overview"></section>
+    <section class="admin-tab-panel hidden" id="panel-ai"></section>
     <section class="admin-tab-panel hidden" id="panel-users"></section>
     <section class="admin-tab-panel hidden" id="panel-settings"></section>
     <section class="admin-tab-panel hidden" id="panel-audit"></section>
@@ -62,6 +64,6 @@
 
 <script src="/industries.js?v=2"></script>
 <script src="/adminCharts.js?v=2"></script>
-<script src="/admin.js?v=2"></script>
+<script src="/admin.js?v=3"></script>
 </body>
 </html>
