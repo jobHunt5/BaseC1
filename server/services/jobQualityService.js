@@ -90,6 +90,22 @@ function hiddenMarketLabel(job) {
   return { label: null, repostCount, reason: null };
 }
 
+// "Evergreen" pipeline posts — talent-community / expression-of-interest
+// listings that never close and aren't a real opening. LinkedIn shows them
+// dated a year+ old (or undated) with "Responses managed off LinkedIn".
+// They're noise for a job seeker and poison for a training corpus (a model
+// learns "job" from something that was never a fillable role), so they're
+// dropped outright rather than merely down-ranked.
+// Only unambiguous pipeline phrasings — bare "join our team" is deliberately
+// excluded (a real title like "Join our team as a Senior Nurse" must survive);
+// the talent-community variants and "express interest" catch the actual
+// evergreen posts without that false-positive risk.
+const EVERGREEN_TITLE_RE = /\b(express(ion)?\s+(of\s+)?interest|register\s+your\s+interest|talent\s+(community|pool|network|pipeline)|join\s+our\s+(talent|community|network)|future\s+(opportunit\w*|roles?|vacanc\w*)|general\s+(application|expression)|speculative\s+application|keep\s+me\s+in\s+mind|we'?re\s+always\s+hiring)\b/i;
+
+function isEvergreenPost(title) {
+  return EVERGREEN_TITLE_RE.test(String(title || ''));
+}
+
 function sameHost(a, b) {
   try { return new URL(a).hostname.replace(/^www\./, '') === new URL(b).hostname.replace(/^www\./, ''); }
   catch { return false; }
@@ -126,4 +142,4 @@ function scoreJobQuality(job, company) {
   return { score, flags };
 }
 
-module.exports = { scoreJobQuality, freshnessLabel, hiddenMarketLabel, normalizeTitle, REPOST_RETENTION_MS };
+module.exports = { scoreJobQuality, freshnessLabel, hiddenMarketLabel, normalizeTitle, isEvergreenPost, REPOST_RETENTION_MS };

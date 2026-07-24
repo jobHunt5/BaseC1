@@ -140,6 +140,15 @@ async function searchAreaBoard(board, suburb, state, terms) {
   return out;
 }
 
+// Only surface postings this fresh. Job boards are full of stale/evergreen
+// listings that mislead a job seeker (the role's long gone) and poison a
+// training corpus. Configurable; defaults to ~6 weeks.
+const MAX_JOB_AGE_DAYS = parseInt(process.env.MAX_JOB_AGE_DAYS || '45', 10);
+const MAX_JOB_AGE_MS = MAX_JOB_AGE_DAYS * 24 * 60 * 60 * 1000;
+// LinkedIn f_TPR bucket asking the board itself for recent posts only —
+// r2592000 = past 30 days. Cheaper and more reliable than filtering after.
+const LINKEDIN_TPR = process.env.LINKEDIN_TPR || 'r2592000';
+
 // LinkedIn's public guest job search — the same unauthenticated endpoint the
 // logged-out linkedin.com/jobs page uses. Unlike the Serper path this returns
 // currently-live postings directly from the board (no search-index staleness,
@@ -147,15 +156,19 @@ async function searchAreaBoard(board, suburb, state, terms) {
 // goes stale fast — expired postings redirect to a generic search page.
 // Plain fetch, the app's normal UA, no auth, public data only.
 async function fetchLinkedInGuestJobs(suburb, state, terms) {
+  const { isEvergreenPost } = require('./jobQualityService');
   const location = [suburb, state, 'Australia'].filter(Boolean).join(', ');
   const termList = (Array.isArray(terms) ? terms.filter(Boolean) : [terms].filter(Boolean));
   if (!termList.length) termList.push('');
 
+  const staleBefore = Date.now() - MAX_JOB_AGE_MS;
   const out = [];
   for (const term of termList.slice(0, 4)) {
     try {
       const resp = await axios.get('https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search', {
-        params: { keywords: term, location, start: 0 },
+        // f_TPR asks LinkedIn for recent posts only — the first line of
+        // defence against year-old listings coming back at all.
+        params: { keywords: term, location, start: 0, f_TPR: LINKEDIN_TPR },
         headers: { 'User-Agent': process.env.ENRICH_USER_AGENT || 'AreaHuntBot/1.0' },
         timeout: 10000,
         validateStatus: () => true,
@@ -169,12 +182,32 @@ async function fetchLinkedInGuestJobs(suburb, state, terms) {
         const company = $el.find('.base-search-card__subtitle').text().replace(/\s+/g, ' ').trim();
         const loc = $el.find('.job-search-card__location').text().replace(/\s+/g, ' ').trim();
         if (!url || !title || !/linkedin\.com\/jobs\/view\//.test(url)) return;
+
+        // Drop talent-pipeline / expression-of-interest posts outright —
+        // exactly the "Express interest in joining our Team" case: never a
+        // real fillable role, whatever its date.
+        if (isEvergreenPost(title)) return;
+
+        // Same title-plausibility gate the Serper board path uses: must read
+        // like a real role, not a junk listing ("Car Maintenance Log Form",
+        // "jobs at Warragul", a bare suburb name). LinkedIn's guest feed is
+        // noisier than its logged-in one, especially on broad queries.
+        if (JUNK_TITLE.test(title) || !ROLE_RE.test(title)) return;
+
+        // The listing carries the post date in <time datetime="YYYY-MM-DD">.
+        // Where present, drop anything past the freshness window (the f_TPR
+        // filter above can still let a stragglers through on some queries).
+        const dt = $el.find('time[datetime]').attr('datetime');
+        const posted_at = dt ? Date.parse(dt) : null;
+        if (posted_at && posted_at < staleBefore) return;
+
         out.push({
           title: title.slice(0, 120),
           company_name: company.slice(0, 80) || null,
           url,
           location: loc || location,
           description: '',
+          posted_at: Number.isFinite(posted_at) ? posted_at : null,
           remote: /\bremote\b/i.test(title),
           source: 'linkedin-jobs',
           confidence: 'board',
@@ -214,10 +247,13 @@ async function findAreaJobs(bounds, { terms = '', limit = 100 } = {}) {
     fetchLinkedInGuestJobs(suburb, state, terms),
   ]);
 
+  const { isEvergreenPost } = require('./jobQualityService');
   const merged = [];
   const seen = new Set();
   for (const batch of batches) {
     for (const j of batch) {
+      // Evergreen/pipeline posts from any board, not just LinkedIn.
+      if (isEvergreenPost(j.title)) continue;
       const key = `${j.title.toLowerCase()}|${(j.company_name || '').toLowerCase()}|${j.source}`;
       const urlKey = (j.url || '').toLowerCase();
       if (seen.has(key) || (urlKey && seen.has(urlKey))) continue;
@@ -230,6 +266,15 @@ async function findAreaJobs(bounds, { terms = '', limit = 100 } = {}) {
   // Upgrade snippet stubs to full postings before caching or persisting —
   // per-URL cached, so repeat scans of a suburb don't refetch anything.
   await enrichJobsWithDetail(merged);
+
+  // Enrichment fills posted_at from each posting's JSON-LD (Seek/LinkedIn/
+  // Indeed alike) — now drop anything past the freshness window with a known
+  // date. A missing date is left in (no evidence it's stale) rather than
+  // guessed at.
+  const staleBefore = Date.now() - MAX_JOB_AGE_MS;
+  for (let i = merged.length - 1; i >= 0; i--) {
+    if (merged[i].posted_at && merged[i].posted_at < staleBefore) merged.splice(i, 1);
+  }
 
   // A full description gives visa detection real text to work with — the
   // search snippet was usually too short to tell either way.

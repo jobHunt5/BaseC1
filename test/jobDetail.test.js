@@ -122,3 +122,25 @@ test('a full detail_status never regresses to snippet on a later blocked re-scra
   assert.equal(rows[0].detail_status, 'full', 'once full, stays full');
   assert.ok(rows[0].description_full, 'full description survives the snippet re-save');
 });
+
+// --- ghost-job / evergreen filtering (jobQualityService.isEvergreenPost) ---
+
+const { isEvergreenPost } = require('../server/services/jobQualityService');
+
+test('isEvergreenPost drops talent-pipeline posts but keeps real roles', () => {
+  // The exact case a user flagged: a year-old "Express interest" pipeline post.
+  assert.equal(isEvergreenPost('Express interest in joining our Team'), true);
+  assert.equal(isEvergreenPost('Join our talent community'), true);
+  assert.equal(isEvergreenPost('Expression of Interest - Registered Nurses'), true);
+  assert.equal(isEvergreenPost('Register your interest'), true);
+  assert.equal(isEvergreenPost('Future Opportunities at Acme'), true);
+  assert.equal(isEvergreenPost('Future Roles - Engineering'), true);
+
+  // Must NOT drop genuine openings — including a real role that happens to
+  // start with "Join our team as…".
+  assert.equal(isEvergreenPost('Senior Software Engineer'), false);
+  assert.equal(isEvergreenPost('Registered Nurse'), false);
+  assert.equal(isEvergreenPost('Join our team as a Senior Nurse'), false);
+  assert.equal(isEvergreenPost(''), false);
+  assert.equal(isEvergreenPost(null), false);
+});
