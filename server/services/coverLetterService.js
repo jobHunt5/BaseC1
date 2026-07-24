@@ -1,9 +1,9 @@
 // Generates a cover letter personalised to one company: AI-written (when
-// OPENAI_API_KEY is set) referencing that company's own scraped description
+// ANTHROPIC_API_KEY is set) referencing that company's own scraped description
 // so it actually engages with their business instead of reading as generic
 // filler, with a template fallback when there's no key.
 
-const axios = require('axios');
+const llm = require('./llmClient');
 const { accentFor, escapeHtml } = require('./documentBrand');
 const { htmlToPdfBuffer } = require('./resumeService');
 
@@ -51,8 +51,7 @@ function templateLetter(profile, company) {
 }
 
 async function aiLetter(profile, company) {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) return null;
+  if (!llm.hasKey()) return null;
 
   const system = `You write concise, honest professional cover letters (not cold-outreach emails).
 Return ONLY valid JSON: { "paragraphs": ["...", "...", "..."] } — 3 to 4 short paragraphs, no headers/greeting/signoff (those are added separately), no hype, no fabricated claims, Australian English OK.`;
@@ -66,23 +65,9 @@ Candidate experience: ${profile.experienceYears || 'unspecified'} years
 Tie the candidate's actual background to what this specific company appears to need or value.`;
 
   try {
-    const resp = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-        temperature: 0.7,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-      },
-      { timeout: 45000, headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' } },
-    );
-    const content = resp.data?.choices?.[0]?.message?.content;
-    const parsed = JSON.parse(content || '{}');
-    const paragraphs = (parsed.paragraphs || []).map(String).filter(p => p.trim().length > 20);
-    if (paragraphs.length >= 2) return { paragraphs, source: 'openai' };
+    const parsed = await llm.completeJson({ system, user, maxTokens: 1200 });
+    const paragraphs = ((parsed && parsed.paragraphs) || []).map(String).filter(p => p.trim().length > 20);
+    if (paragraphs.length >= 2) return { paragraphs, source: 'claude' };
   } catch (err) {
     console.warn('[cover-letter-ai]', err.message);
   }

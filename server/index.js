@@ -127,7 +127,7 @@ app.get('/api/health', (req, res) => {
     // Per-source full-posting fetch reach since boot (Seek/Indeed/LinkedIn…)
     // — the measured answer to "which boards actually let us in from here".
     jobDetailReach: require('./services/jobDetailService').getDetailStats(),
-    hasOpenAiKey: !!process.env.OPENAI_API_KEY,
+    hasAiKey: !!process.env.ANTHROPIC_API_KEY,
     hasSmtp: !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
     version: '0.3.0',
   });

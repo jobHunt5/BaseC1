@@ -14,6 +14,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.114.0",
     "@sentry/node": "^10.66.0",
     "axios": "^1.18.1",
     "cheerio": "^1.2.0",

@@ -897,7 +897,7 @@ const App = (() => {
         toast('Provider is set to Google but no API key is configured.', 'error');
       }
       state.hasSerperKey = !!h.hasSerperKey;
-      state.hasOpenAiKey = !!h.hasOpenAiKey;
+      state.hasAiKey = !!h.hasAiKey;
       state.hasSmtp = !!h.hasSmtp;
       state.enrichLimit = h.enrichLimit || 0;
       state.enrichConcurrency = h.enrichConcurrency || 6;
@@ -2372,7 +2372,7 @@ const App = (() => {
         <div class="outreach-ai-bar">
           <span class="outreach-ai-title">${ic('sparkles', 13)}Quick creative drafts</span>
           <button type="button" class="mini-btn" id="genEmailBtn-${cid}" onclick="App.generateOutreachEmails('${cid}')">
-            ${state.hasOpenAiKey ? 'Generate with AI' : 'Generate options'}
+            ${state.hasAiKey ? 'Generate with AI' : 'Generate options'}
           </button>
         </div>
         <div class="outreach-variants" id="outreachVariants-${cid}">${variantCards}</div>
@@ -2531,7 +2531,7 @@ const App = (() => {
     } finally {
       if (btn) {
         btn.disabled = false;
-        btn.textContent = state.hasOpenAiKey ? 'Generate with AI' : 'Generate options';
+        btn.textContent = state.hasAiKey ? 'Generate with AI' : 'Generate options';
       }
     }
   }
@@ -2749,7 +2749,7 @@ const App = (() => {
       <div class="detail-tab-panel" data-tab-panel="overview">
         ${trustBanner}
         ${renderMatchBanner(c)}
-        ${state.hasOpenAiKey ? renderAiFitSection(c) : ''}
+        ${state.hasAiKey ? renderAiFitSection(c) : ''}
         ${descSection}
         <div class="detail-section">
           <div class="detail-label">

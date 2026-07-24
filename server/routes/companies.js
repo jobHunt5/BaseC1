@@ -354,7 +354,7 @@ router.post('/companies/:id/verify-email', async (req, res) => {
   }
 });
 
-// Generate multiple creative outreach drafts (AI if OPENAI_API_KEY set, else templates).
+// Generate multiple creative outreach drafts (AI if ANTHROPIC_API_KEY set, else templates).
 router.post('/companies/:id/generate-emails', aiDraftRateLimit, async (req, res) => {
   const c = await getCompany(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'not found' });
@@ -459,7 +459,7 @@ router.get('/profile/resume.pdf', pdfRateLimit, async (req, res) => {
 });
 
 // Cover letter personalised to this one company — AI-written when
-// OPENAI_API_KEY is set (references the company's own scraped description),
+// ANTHROPIC_API_KEY is set (references the company's own scraped description),
 // template fallback otherwise.
 router.get('/companies/:id/cover-letter.pdf', pdfRateLimit, async (req, res) => {
   const c = await getCompany(req.params.id, req.user.id);

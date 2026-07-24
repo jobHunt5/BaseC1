@@ -5,18 +5,18 @@
 // genuine reasoning: which roles actually fit, why, and what's blocking the
 // candidate (the classic barrier for skilled/international job seekers).
 //
-// Same OpenAI call shape, key, and model config as aiFitService.js /
-// outreachAiService.js — one OPENAI_API_KEY activates all of them together.
-// Returns { available: false } (not an error) when no key is set, so the
-// admin UI can show "add a key to switch this on" instead of breaking. This
-// is the difference between the keyword matcher and real AI: with a key, an
-// actual model reasons over the retrieved jobs.
+// Uses the shared Claude client (llmClient) — one ANTHROPIC_API_KEY activates
+// this alongside AI fit scoring, cover letters, and outreach drafts. Returns
+// { available: false } (not an error) when no key is set, so the admin UI can
+// show "add a key to switch this on" instead of breaking. This is the
+// difference between the keyword matcher and real AI: with a key, an actual
+// model reasons over the retrieved jobs.
 
-const axios = require('axios');
 const aiMatch = require('./aiMatchService');
+const llm = require('./llmClient');
 
 function hasKey() {
-  return !!process.env.OPENAI_API_KEY;
+  return llm.hasKey();
 }
 
 function buildPrompt(query, jobs) {
@@ -66,24 +66,8 @@ async function analyze(query, { limit = 8 } = {}) {
 
   const { system, user } = buildPrompt(query, results);
   try {
-    const resp = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: model(),
-        temperature: 0.3,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-      },
-      {
-        timeout: 45000,
-        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-      },
-    );
-    const content = resp.data?.choices?.[0]?.message?.content;
-    const parsed = JSON.parse(content || '{}');
+    const parsed = await llm.completeJson({ system, user, maxTokens: 2000 });
+    if (!parsed) return { available: true, model: model(), error: 'could not parse model output' };
     // Re-attach the retrieval score + url to each match the model returned, by
     // ref, so the UI can link out and show both signals.
     const byRef = new Map(results.map(r => [r.ref, r]));
@@ -117,7 +101,7 @@ async function analyze(query, { limit = 8 } = {}) {
 }
 
 function model() {
-  return process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  return llm.model();
 }
 
 module.exports = { analyze, hasKey, model };

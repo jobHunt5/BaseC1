@@ -48,7 +48,7 @@ router.get('/stats', async (req, res) => {
       places_provider: process.env.PLACES_PROVIDER || 'osm',
       has_google_key: !!process.env.GOOGLE_MAPS_API_KEY,
       has_serper_key: !!process.env.SERPER_API_KEY,
-      has_openai_key: !!process.env.OPENAI_API_KEY,
+      has_ai_key: !!process.env.ANTHROPIC_API_KEY,
       has_smtp: !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
       serper_state: getSerperStatus().state,
       serper_message: getSerperStatus().message,
@@ -119,7 +119,7 @@ router.get('/ai/match', async (req, res) => {
 });
 
 // Real LLM reasoning over the retrieved shortlist. Dormant (available:false)
-// until OPENAI_API_KEY is set on the server.
+// until ANTHROPIC_API_KEY is set on the server.
 router.get('/ai/analyze', async (req, res) => {
   const q = String(req.query.q || '').trim().slice(0, 2000);
   if (!q) return res.status(400).json({ error: 'q (a candidate description) is required' });

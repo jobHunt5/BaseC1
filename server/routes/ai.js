@@ -8,17 +8,17 @@
 const express = require('express');
 const { getCompany, getJob } = require('../db');
 const { getUserFromRequest } = require('./auth');
-const { scoreFit, hasOpenAiKey } = require('../services/aiFitService');
+const { scoreFit, hasKey: hasAiKey } = require('../services/aiFitService');
 
 const router = express.Router();
 
 router.get('/fit-score/available', (req, res) => {
-  res.json({ available: hasOpenAiKey() });
+  res.json({ available: hasAiKey() });
 });
 
 router.post('/fit-score', async (req, res) => {
-  if (!hasOpenAiKey()) {
-    return res.json({ available: false, message: 'OPENAI_API_KEY not configured' });
+  if (!hasAiKey()) {
+    return res.json({ available: false, message: 'ANTHROPIC_API_KEY not configured' });
   }
 
   const user = await getUserFromRequest(req);

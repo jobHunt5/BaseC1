@@ -1,6 +1,6 @@
 // AI + template outreach drafts — multiple creative options per company.
 
-const axios = require('axios');
+const llm = require('./llmClient');
 
 const TONES = [
   { id: 'warm', label: 'Warm intro', hint: 'Friendly, conversational' },
@@ -156,10 +156,9 @@ function templateVariants(company, profile) {
 }
 
 async function generateAiVariants(company, profile, { count = 4 } = {}) {
-  const key = process.env.OPENAI_API_KEY;
   const ctx = buildContext(company, profile);
 
-  if (!key) {
+  if (!llm.hasKey()) {
     return { variants: templateVariants(company, profile), ai: false };
   }
 
@@ -179,32 +178,14 @@ Website: ${ctx.website || 'none'}.
 Each variant must use a different tone and opening.`;
 
   try {
-    const resp = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-        temperature: 0.85,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-      },
-      {
-        timeout: 45000,
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      },
-    );
-
-    const content = resp.data?.choices?.[0]?.message?.content;
-    const parsed = JSON.parse(content || '{}');
-    const variants = (parsed.variants || []).slice(0, count).map(v => ({
+    const parsed = await llm.completeJson({ system, user, maxTokens: 2500 });
+    const variants = ((parsed && parsed.variants) || []).slice(0, count).map(v => ({
       tone: v.tone || 'custom',
       label: v.label || v.tone || 'Draft',
       hint: 'AI generated',
       subject: String(v.subject || '').slice(0, 200),
       body: String(v.body || ''),
-      source: 'openai',
+      source: 'claude',
     })).filter(v => v.body.length > 40);
 
     if (variants.length >= 2) {

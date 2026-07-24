@@ -122,7 +122,7 @@
         </div>
         <div class="admin-config-row">
           <span class="admin-config-dot ${status.llm_reasoning ? 'on' : 'warn'}"></span><span>LLM reasoning</span>
-          <span class="admin-config-state">${status.llm_reasoning ? `on · ${escapeHtml(status.llm_model || '')}` : 'off — set OPENAI_API_KEY to switch on real AI reasoning'}</span>
+          <span class="admin-config-state">${status.llm_reasoning ? `on · ${escapeHtml(status.llm_model || '')}` : 'off — set ANTHROPIC_API_KEY to switch on real AI reasoning'}</span>
         </div>
         <div style="display:flex;gap:8px;margin-top:14px">
           <input type="text" id="aiQuery" class="admin-input" style="flex:1"
@@ -130,7 +130,7 @@
                  onkeydown="if(event.key==='Enter')AdminApp.runAiMatch()" />
           <button type="button" class="admin-btn admin-btn-outline" onclick="AdminApp.runAiMatch()">Match</button>
           <button type="button" class="admin-btn admin-btn-primary" onclick="AdminApp.runAiAnalyze()"
-                  title="${status.llm_reasoning ? 'Real LLM reasoning over the matches' : 'Needs OPENAI_API_KEY on the server'}">Analyze with AI ✨</button>
+                  title="${status.llm_reasoning ? 'Real LLM reasoning over the matches' : 'Needs ANTHROPIC_API_KEY on the server'}">Analyze with AI ✨</button>
         </div>
         <div id="aiResults" style="margin-top:14px"></div>
       </div>`;
@@ -151,7 +151,7 @@
     if (data.available === false) {
       box.innerHTML = `<div class="admin-empty-hint" style="line-height:1.5">
         <strong>Real AI reasoning is built but switched off.</strong><br>
-        Set <code>OPENAI_API_KEY</code> on the server (Render → Environment) and this becomes a real LLM
+        Set <code>ANTHROPIC_API_KEY</code> on the server (Render → Environment) and this becomes real Claude
         reading each candidate and job. The same key also switches on AI fit-scores and cover letters.
       </div>`;
       return;
@@ -373,7 +373,7 @@
           <div class="admin-card-title">Connections</div>
           ${configRow('Google Places API', config.has_google_key)}
           ${configRow('Serper (LinkedIn/web search)', config.has_serper_key)}
-          ${configRow('OpenAI (AI fit scoring)', config.has_openai_key)}
+          ${configRow('Claude (AI features)', config.has_ai_key)}
           ${configRow('SMTP (direct email send)', config.has_smtp)}
           <div class="admin-config-row"><span class="admin-config-dot on"></span><span>Places provider</span><span class="admin-config-state">${escapeHtml(config.places_provider)}</span></div>
           ${config.has_serper_key ? `
